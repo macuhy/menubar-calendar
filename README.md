@@ -1,0 +1,43 @@
+# 日历（menubar-calendar）
+
+macOS 菜单栏日历，SwiftUI + SwiftPM 构建，无需 Xcode 工程。
+
+![platform](https://img.shields.io/badge/macOS-14%2B-blue)
+
+## 功能
+
+- 菜单栏显示日期时间，悬停 / 点击 / 全局快捷键 **⌃⌥C** 呼出面板
+- 紧凑月历 + 当日与即将到来的日程列表
+- 中国法定节假日「休 / 班」角标（内置 2025–2026 官方数据，来源：国务院办公厅通知）
+- 系统日历（EventKit）双向同步；未授权时本地 JSON 存储
+- 双击日期格子快速新建日程；日程行拖拽到任意日期改期
+- 自定义事件颜色、时区切换、每周起始日（周日 / 周一）设置
+- Sparkle 自动更新
+
+## 安装
+
+从 [Releases](../../releases) 下载 `Calendar.zip`，解压后把 `日历.app` 拖进「应用程序」。
+
+> 应用未经 Apple 公证（无开发者账号签名），首次打开请右键 →「打开」，
+> 或执行：`xattr -dr com.apple.quarantine /Applications/日历.app`
+
+## 本地构建
+
+```bash
+./build_app.sh        # 产物在 build/日历.app
+```
+
+## 发布流程
+
+参考 [macuhy/macos-app-release-kit](https://github.com/macuhy/macos-app-release-kit)：
+
+```bash
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+GitHub Actions 会自动：编译 → 打包 → Sparkle EdDSA 签名 → 创建 Release → 更新 `appcast.xml`。
+已安装的 App 之后会通过 Sparkle 弹窗提示更新。
+
+- 版本号取自 tag（`v1.1.0` → `CFBundleShortVersionString=1.1.0`）
+- build 号用 `git rev-list --count HEAD` 自动生成，保证递增
+- 唯一需要的仓库 Secret：`SPARKLE_PRIVATE_KEY`

@@ -1,0 +1,109 @@
+# 改编自 macuhy/macos-app-release-kit 的 templates/release.yml
+# 适配点：SPM 项目（无 .xcodeproj）；无 Apple 开发者证书 → ad-hoc 签名、跳过公证；
+#        源码与分发同一个公共仓库 → 用 GITHUB_TOKEN 即可，无需 RELEASE_REPO_PAT。
+# 唯一需要的 Secret：SPARKLE_PRIVATE_KEY（Sparkle EdDSA 私钥）
+name: Build & Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version: { description: '版本号（如 1.2.0）', required: true }
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: 日历
+  ZIP_NAME: Calendar.zip
+  DOWNLOAD_URL_PREFIX: https://github.com/uhyrdtrdtfg-creator/menubar-calendar/releases/download/
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: ${{ runner.os }}-spm-
+
+      - name: Build & package app
+        run: |
+          VERSION="${{ steps.version.outputs.version }}" \
+          BUILD_NUMBER="${{ steps.version.outputs.build_number }}" \
+          ./build_app.sh
+
+      - name: Create release ZIP
+        run: |
+          cd build && ditto -c -k --sequesterRsrc --keepParent "$APP_NAME.app" "$ZIP_NAME" && cd ..
+          echo "ZIP_PATH=build/$ZIP_NAME" >> "$GITHUB_ENV"
+
+      - name: Install Sparkle tools
+        run: |
+          curl -L -o /tmp/Sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/2.9.1/Sparkle-2.9.1.tar.xz"
+          mkdir -p /tmp/sparkle && tar -xf /tmp/Sparkle.tar.xz -C /tmp/sparkle
+          echo "SPARKLE_BIN=/tmp/sparkle/bin" >> "$GITHUB_ENV"
+
+      - name: Sign with Sparkle
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          KEY="$RUNNER_TEMP/sparkle_key"; printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY"
+          OUT=$("$SPARKLE_BIN/sign_update" "$ZIP_PATH" -f "$KEY")
+          rm -f "$KEY"
+          echo "ed_signature=$(echo "$OUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')" >> "$GITHUB_ENV"
+          echo "length=$(echo "$OUT" | sed -n 's/.*length="\([^"]*\)".*/\1/p')" >> "$GITHUB_ENV"
+
+      - name: Create tag (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version.outputs.tag }}" && git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$TAG" "$ZIP_PATH" --repo "${{ github.repository }}" \
+            --title "$APP_NAME $VERSION" --generate-notes
+
+      - name: Update appcast.xml on main
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          git config user.name "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git fetch origin main && git checkout main
+          python3 scripts/update_appcast.py appcast.xml \
+            "$APP_NAME" "$VERSION" "$BUILD_NUMBER" "$ed_signature" "$length" \
+            "${DOWNLOAD_URL_PREFIX}${TAG}/${ZIP_NAME}" \
+            "https://github.com/${{ github.repository }}/releases/tag/$TAG"
+          git add appcast.xml
+          git diff --cached --quiet || git commit -m "release: $APP_NAME $VERSION (build $BUILD_NUMBER)"
+          git push origin main

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sparkle 更新源。每次 tag 发布后由 CI 自动追加 <item>。 -->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>日历 Updates</title>
+    <description>日历 自动更新源</description>
+    <language>zh</language>
+  </channel>
+</rss>
