@@ -33,6 +33,30 @@ enum DisplayTimeZone {
     static var current: TimeZone = .current
 }
 
+enum CalendarAppearanceMode: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+
+    var nsAppearanceName: NSAppearance.Name? {
+        switch self {
+        case .system: nil
+        case .light: .aqua
+        case .dark: .darkAqua
+        }
+    }
+}
+
 // MARK: - Store
 
 @MainActor
@@ -55,6 +79,14 @@ final class CalendarStore: ObservableObject {
     /// 每周起始日（1=周日，2=周一），持久化到 UserDefaults
     @Published var firstWeekday: Int {
         didSet { UserDefaults.standard.set(firstWeekday, forKey: "firstWeekday") }
+    }
+
+    /// 外观模式（跟随系统 / 浅色 / 深色），持久化到 UserDefaults
+    @Published var appearanceMode: CalendarAppearanceMode {
+        didSet {
+            UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode")
+            applyAppearance()
+        }
     }
 
     /// 是否已连接系统日历（EventKit 授权通过后为 true，事件双向读写系统日历）
@@ -99,14 +131,19 @@ final class CalendarStore: ObservableObject {
         DisplayTimeZone.current = TimeZone(identifier: savedZone) ?? .current
 
         let savedWeekday = UserDefaults.standard.integer(forKey: "firstWeekday")
-        self.firstWeekday = (savedWeekday == 1 || savedWeekday == 2) ? savedWeekday : 1
+        let effectiveWeekday = (savedWeekday == 1 || savedWeekday == 2) ? savedWeekday : 2
+        self.firstWeekday = effectiveWeekday
+
+        let savedAppearance = UserDefaults.standard.string(forKey: "appearanceMode")
+        self.appearanceMode = CalendarAppearanceMode(rawValue: savedAppearance ?? "") ?? .system
 
         var cal = Calendar.current
-        cal.firstWeekday = 1
+        cal.firstWeekday = effectiveWeekday
         cal.timeZone = TimeZone(identifier: savedZone) ?? .current
         let today = cal.startOfDay(for: Date())
         self.displayedMonth = today
         self.selectedDate = today
+        applyAppearance()
         load()
         if events.isEmpty { seedSampleEvents() }
 
@@ -116,6 +153,10 @@ final class CalendarStore: ObservableObject {
     /// 恢复为跟随系统时区
     func useSystemTimeZone() {
         timeZoneID = TimeZone.current.identifier
+    }
+
+    private func applyAppearance() {
+        NSApp.appearance = appearanceMode.nsAppearanceName.flatMap { NSAppearance(named: $0) }
     }
 
     // MARK: Queries
@@ -143,12 +184,27 @@ final class CalendarStore: ObservableObject {
         calendar.isDateInToday(day)
     }
 
-    /// 今天之后的事件，按时间排序（跨天事件只显示一次）
-    func upcomingEvents(limit: Int = 12) -> [CalendarEvent] {
+    /// 今天之后的事件，按时间排序（跨天事件只显示一次）。
+    /// 如果传入 excludedDay，则该日期的事件不会出现在「即将到来」里。
+    func upcomingEvents(limit: Int = 12, excluding excludedDay: Date? = nil) -> [CalendarEvent] {
         let today = calendar.startOfDay(for: Date())
+        let excludedKeys: Set<String>
+        if let excludedDay {
+            excludedKeys = Set(
+                events
+                    .filter { calendar.isDate($0.date, inSameDayAs: excludedDay) }
+                    .map { $0.ekID ?? $0.id.uuidString }
+            )
+        } else {
+            excludedKeys = []
+        }
         var seen = Set<String>()
         return events
             .filter { $0.date > today }
+            .filter { event in
+                let key = event.ekID ?? event.id.uuidString
+                return !excludedKeys.contains(key)
+            }
             .sorted { $0.startTime < $1.startTime }
             .filter { ev in
                 let key = ev.ekID ?? ev.id.uuidString

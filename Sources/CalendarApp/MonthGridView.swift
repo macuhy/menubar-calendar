@@ -18,10 +18,10 @@ struct MonthGridView: View {
 
     private var weekdayHeader: some View {
         HStack(spacing: 0) {
-            ForEach(Array(Theme.weekdaySymbols.enumerated()), id: \.offset) { index, symbol in
+            ForEach(Array(store.weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
                 Text("周\(symbol)")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.secondaryText.opacity(isWeekendColumn(index) ? 0.6 : 1.0))
+                    .foregroundStyle(Theme.secondaryText.opacity(isWeekend(symbol) ? 0.6 : 1.0))
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.trailing, 8)
             }
@@ -29,9 +29,8 @@ struct MonthGridView: View {
         .padding(.vertical, 6)
     }
 
-    /// Column 0 is Sunday, column 6 is Saturday (firstWeekday == 1).
-    private func isWeekendColumn(_ index: Int) -> Bool {
-        index == 0 || index == 6
+    private func isWeekend(_ symbol: String) -> Bool {
+        symbol == "六" || symbol == "日"
     }
 
     // MARK: Grid

@@ -29,6 +29,71 @@ enum Theme {
     // 节假日角标：休（绿）/ 班（橙）
     static let restBadge = Color(red: 0.20, green: 0.70, blue: 0.32)
     static let workBadge = Color(red: 0.99, green: 0.62, blue: 0.04)
+
+    static func glassTint(for scheme: ColorScheme) -> Color {
+        scheme == .dark
+            ? Color(red: 0.10, green: 0.14, blue: 0.18).opacity(0.56)
+            : Color(red: 0.98, green: 0.96, blue: 0.90).opacity(0.62)
+    }
+
+    static func glassHighlight(for scheme: ColorScheme) -> Color {
+        scheme == .dark
+            ? Color.white.opacity(0.07)
+            : Color.white.opacity(0.42)
+    }
+
+    static func glassBorder(for scheme: ColorScheme) -> Color {
+        scheme == .dark
+            ? Color.white.opacity(0.12)
+            : Color.black.opacity(0.08)
+    }
+}
+
+struct PanelBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow)
+
+            Theme.glassTint(for: colorScheme)
+
+            LinearGradient(
+                colors: [
+                    Theme.glassHighlight(for: colorScheme),
+                    Color.clear,
+                    Theme.accent.opacity(colorScheme == .dark ? 0.08 : 0.05)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+        .overlay(
+            Rectangle()
+                .strokeBorder(Theme.glassBorder(for: colorScheme), lineWidth: 0.8)
+        )
+    }
+}
+
+struct VisualEffectBackground: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        view.isEmphasized = true
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        view.isEmphasized = true
+    }
 }
 
 extension Color {

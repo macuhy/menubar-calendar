@@ -62,6 +62,22 @@ struct SettingsView: View {
             .padding(.top, 10)
 
             HStack {
+                Text("外观")
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+                Picker("", selection: $store.appearanceMode) {
+                    Text("系统").tag(CalendarAppearanceMode.system)
+                    Text("浅色").tag(CalendarAppearanceMode.light)
+                    Text("深色").tag(CalendarAppearanceMode.dark)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 150)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+
+            HStack {
                 Text("全局快捷键")
                     .font(.system(size: 12, weight: .medium))
                 Spacer()
@@ -102,6 +118,8 @@ struct SettingsView: View {
             }
         }
         .frame(width: 340, height: 500)
+        .background(PanelBackground().ignoresSafeArea())
+        .preferredColorScheme(store.appearanceMode.colorScheme)
     }
 
     private func zoneRow(_ id: String) -> some View {

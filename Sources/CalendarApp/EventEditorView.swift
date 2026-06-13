@@ -161,6 +161,7 @@ struct EventEditorView: View {
         }
         .padding(20)
         .frame(width: 420, height: 520)
+        .background(PanelBackground().ignoresSafeArea())
         .onChange(of: startTime) { _, newStart in
             if endTime < newStart {
                 endTime = store.calendar.date(byAdding: .hour, value: 1, to: newStart) ?? newStart

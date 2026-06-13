@@ -17,8 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var autoHideTimer: Timer?
+    private var hoverOpenTimer: Timer?
     private var titleTimer: Timer?
     private var storeSubscription: AnyCancellable?
+    private var appearanceSubscription: AnyCancellable?
     private var hotKey: GlobalHotKey?
     /// 由快捷键打开且鼠标尚未移入面板时，悬停检测不收起面板
     private var openedViaHotKey = false
@@ -62,10 +64,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         titleTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateTitle() }
         }
+        // 菜单栏按钮的 tracking event 偶尔会被系统状态栏吞掉，轮询鼠标位置更稳定。
+        hoverOpenTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.openOnMenuBarHoverIfNeeded() }
+        }
 
         // 时区设置变化时，菜单栏日期立即跟着刷新
         storeSubscription = store.$timeZoneID.sink { [weak self] _ in
             Task { @MainActor in self?.updateTitle() }
+        }
+        appearanceSubscription = store.$appearanceMode.sink { [weak self] _ in
+            Task { @MainActor in self?.applyPopoverAppearance() }
         }
 
         // 全局快捷键 ⌃⌥C：显示 / 隐藏面板
@@ -123,7 +132,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !popover.isShown, let button = statusItem.button else { return }
         openedViaHotKey = viaHotKey
         hoveredSinceHotKeyOpen = false
+        applyPopoverAppearance()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        applyPopoverAppearance()
+        positionPopoverNearStatusItem()
+        clearStatusButtonHighlight(button)
+        DispatchQueue.main.async { [weak self, weak button] in
+            self?.positionPopoverNearStatusItem()
+            if let button { self?.clearStatusButtonHighlight(button) }
+        }
         startAutoHideMonitor()
         if viaHotKey {
             // 点击应用外任意位置时收起（全局监听不会收到本应用内的点击）
@@ -132,6 +149,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) { [weak self] _ in
                 Task { @MainActor in self?.closePopover() }
             }
+        }
+    }
+
+    private func positionPopoverNearStatusItem() {
+        guard let window = popover.contentViewController?.view.window,
+              let buttonRect = statusButtonScreenRect() else { return }
+        let screenFrame = screen(containing: buttonRect)?.visibleFrame
+            ?? window.screen?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? window.frame
+        let margin: CGFloat = 8
+        let gap: CGFloat = 6
+
+        var frame = window.frame
+        frame.origin.x = buttonRect.midX - frame.width / 2
+        frame.origin.x = min(
+            max(frame.origin.x, screenFrame.minX + margin),
+            screenFrame.maxX - frame.width - margin
+        )
+
+        let belowMenuBarY = buttonRect.minY - frame.height - gap
+        let aboveButtonY = buttonRect.maxY + gap
+        frame.origin.y = belowMenuBarY >= screenFrame.minY + margin
+            ? belowMenuBarY
+            : aboveButtonY
+        frame.origin.y = min(
+            max(frame.origin.y, screenFrame.minY + margin),
+            screenFrame.maxY - frame.height - margin
+        )
+
+        window.setFrame(frame, display: true)
+    }
+
+    private func openOnMenuBarHoverIfNeeded() {
+        guard !popover.isShown, mouseIsOverStatusButton() else { return }
+        showPopover()
+    }
+
+    private func applyPopoverAppearance() {
+        let appearance = store.appearanceMode.nsAppearanceName.flatMap { NSAppearance(named: $0) }
+
+        if let view = popover.contentViewController?.view {
+            view.appearance = appearance
+            view.wantsLayer = true
+            view.layer?.backgroundColor = NSColor.clear.cgColor
+        }
+        if let window = popover.contentViewController?.view.window {
+            window.appearance = appearance
+            window.isOpaque = false
+            window.backgroundColor = .clear
+        }
+    }
+
+    private func clearStatusButtonHighlight(_ button: NSStatusBarButton) {
+        button.highlight(false)
+        button.state = .off
+        DispatchQueue.main.async {
+            button.highlight(false)
+            button.state = .off
         }
     }
 
@@ -172,8 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func mouseIsOverButtonOrPanel() -> Bool {
         let mouse = NSEvent.mouseLocation
-        if let buttonWindow = statusItem.button?.window,
-           buttonWindow.frame.insetBy(dx: -6, dy: -6).contains(mouse) {
+        if mouseIsOverStatusButton() {
             return true
         }
         if let panel = popover.contentViewController?.view.window {
@@ -181,5 +256,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if panel.frame.insetBy(dx: -20, dy: -20).contains(mouse) { return true }
         }
         return false
+    }
+
+    private func mouseIsOverStatusButton() -> Bool {
+        guard let buttonRectOnScreen = statusButtonScreenRect() else { return false }
+        return buttonRectOnScreen.insetBy(dx: -6, dy: -6).contains(NSEvent.mouseLocation)
+    }
+
+    private func statusButtonScreenRect() -> NSRect? {
+        guard let button = statusItem.button, let window = button.window else { return nil }
+        let buttonRectInWindow = button.convert(button.bounds, to: nil)
+        return window.convertToScreen(buttonRectInWindow)
+    }
+
+    private func screen(containing rect: NSRect) -> NSScreen? {
+        let point = NSPoint(x: rect.midX, y: rect.midY)
+        return NSScreen.screens.first { $0.frame.contains(point) }
     }
 }

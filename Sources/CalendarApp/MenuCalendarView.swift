@@ -38,14 +38,19 @@ struct MenuCalendarView: View {
             footer
         }
         .frame(width: 340, height: 600)
+        .background(PanelBackground().ignoresSafeArea())
+        .preferredColorScheme(store.appearanceMode.colorScheme)
         .sheet(item: $creating) { target in
             EventEditorView(mode: .create(initialDate: target.date))
+                .preferredColorScheme(store.appearanceMode.colorScheme)
         }
         .sheet(item: $editingEvent) { event in
             EventEditorView(mode: .edit(event))
+                .preferredColorScheme(store.appearanceMode.colorScheme)
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
+                .preferredColorScheme(store.appearanceMode.colorScheme)
         }
     }
 
@@ -137,7 +142,8 @@ struct MenuCalendarView: View {
 
                 sectionHeader("即将到来")
                     .padding(.top, 8)
-                let upcoming = store.upcomingEvents()
+                // 选中未来某天时，上方已显示当天日程；这里剔除它，避免重复。
+                let upcoming = store.upcomingEvents(excluding: store.selectedDate)
                 if upcoming.isEmpty {
                     emptyHint("暂无即将到来的日程")
                 } else {
