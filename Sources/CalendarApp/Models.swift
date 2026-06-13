@@ -315,6 +315,21 @@ final class CalendarStore: ObservableObject {
 
     // MARK: EventKit 双向同步
 
+    /// 用户点「去授权」时调用：未决定 → 弹系统授权框；已拒绝/受限 → 跳系统设置让用户手动开。
+    /// （仅在 Developer ID 签名/公证版上才会真正登记进隐私列表；ad-hoc build 会被 TCC 直接拒绝。）
+    func requestCalendarAccess() {
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .notDetermined:
+            Task { await setupEventKit() }
+        case .denied, .restricted:
+            NSWorkspace.shared.open(URL(string:
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!)
+        default:
+            // .fullAccess / .writeOnly：已授权，直接重连
+            Task { await setupEventKit() }
+        }
+    }
+
     private func setupEventKit() async {
         let granted = (try? await ekStore.requestFullAccessToEvents()) ?? false
         usingSystemCalendar = granted

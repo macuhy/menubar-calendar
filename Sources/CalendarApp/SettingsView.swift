@@ -36,11 +36,8 @@ struct SettingsView: View {
                     .foregroundColor(Theme.secondaryText)
                 Spacer()
                 if !store.usingSystemCalendar {
-                    Button("去授权") {
-                        NSWorkspace.shared.open(URL(string:
-                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!)
-                    }
-                    .font(.system(size: 11))
+                    Button("去授权") { store.requestCalendarAccess() }
+                        .font(.system(size: 11))
                 }
             }
             .padding(.horizontal, 12)
