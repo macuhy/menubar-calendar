@@ -4,11 +4,22 @@ import Foundation
 /// 数据来源：国务院办公厅通知
 ///  - 2025 年：国办发明电〔2024〕12号
 ///  - 2026 年：国办发明电〔2025〕7号
-/// 新一年安排通常在前一年 11 月发布，届时在下方补充即可。
+/// 注意：此为硬编码数据，需逐年维护。
+/// 国务院办公厅通常在每年 11–12 月发布次年放假安排，届时须更新
+/// `latestDataYear` 并在下方 restDays / workDays 补充新一年的休/班数据。
 enum ChineseHolidays {
     enum DayMark {
         case rest(String)   // 休：法定放假（含调休连休），关联节日名
         case work           // 班：调休补班的周末
+    }
+
+    /// 内置数据覆盖到的最新年份。新增次年安排后，请同步更新此值。
+    static let latestDataYear = 2026
+
+    /// 是否已内置指定公历年份的休/班数据。
+    /// 当前覆盖范围：2025 ... latestDataYear。
+    static func hasHolidayData(for year: Int) -> Bool {
+        return year >= 2025 && year <= latestDataYear
     }
 
     /// 按公历年月日查询休/班标记；非节假日且非补班日返回 nil。

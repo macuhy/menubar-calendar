@@ -18,6 +18,10 @@ let package = Package(
                 // Sparkle.framework 打包时嵌入 App 的 Frameworks 目录
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
             ]
+        ),
+        .testTarget(
+            name: "CalendarAppTests",
+            dependencies: ["CalendarApp"]
         )
     ]
 )
