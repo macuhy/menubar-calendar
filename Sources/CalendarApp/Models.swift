@@ -157,7 +157,8 @@ final class CalendarStore: ObservableObject {
         load()
         if events.isEmpty { seedSampleEvents() }
 
-        Task { await setupEventKit() }
+        // 启动只做「已授权则静默重连」，不在后台触发弹窗（详见 connectCalendarIfAuthorized 注释）
+        Task { await connectCalendarIfAuthorized() }
     }
 
     /// 恢复为跟随系统时区
@@ -320,6 +321,10 @@ final class CalendarStore: ObservableObject {
     func requestCalendarAccess() {
         switch EKEventStore.authorizationStatus(for: .event) {
         case .notDetermined:
+            // 关键：本应用是无 Dock 图标的 accessory 应用。若在「非前台活跃」状态下请求，
+            // 系统会静默抑制 EventKit 授权弹窗——回调 granted=false 且状态仍停留在 .notDetermined，
+            // 用户看不到任何弹框，表现就是「怎么点都授权不了」。必须先把自己激活到前台，弹窗才会出现。
+            NSApp.activate(ignoringOtherApps: true)
             Task { await setupEventKit() }
         case .denied, .restricted:
             NSWorkspace.shared.open(URL(string:
@@ -327,6 +332,19 @@ final class CalendarStore: ObservableObject {
         default:
             // .fullAccess / .writeOnly：已授权，直接重连
             Task { await setupEventKit() }
+        }
+    }
+
+    /// 启动时调用：仅在「已经授权」时静默重连系统日历。
+    /// 绝不在启动阶段对「未决定」发起请求——此时应用尚未成为前台活跃应用，弹窗会被系统抑制，
+    /// 白白浪费掉那次自然弹框的机会（看起来甚至像被拒绝）。未授权的新用户改由其在面板里
+    /// 主动点「去授权」触发（见 requestCalendarAccess，那条路径会先激活前台）。
+    private func connectCalendarIfAuthorized() async {
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess, .writeOnly:
+            await setupEventKit()
+        default:
+            break
         }
     }
 
