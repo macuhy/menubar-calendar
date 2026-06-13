@@ -25,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 由快捷键打开且鼠标尚未移入面板时，悬停检测不收起面板
     private var openedViaHotKey = false
     private var hoveredSinceHotKeyOpen = false
+    /// 刚关闭后若光标仍停在图标上，先不重开；待光标离开图标再恢复悬停打开
+    private var suppressHoverReopen = false
     private var outsideClickMonitor: Any?
     private var escKeyMonitor: Any?
     let store = CalendarStore()
@@ -107,11 +109,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Hover open / auto close
 
     @objc func mouseEntered(with event: NSEvent) {
-        showPopover()
+        requestHoverOpen()
     }
 
     @objc func mouseExited(with event: NSEvent) {
-        // 离开按钮后由 autoHideTimer 判断鼠标是否已移入面板，否则收起
+        // 离开图标即重新武装悬停打开（轮询也会兜底复位）
+        suppressHoverReopen = false
+        // 之后由 autoHideTimer 判断鼠标是否已移入面板，否则收起
     }
 
     @objc private func toggleFromClick() {
@@ -183,7 +187,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openOnMenuBarHoverIfNeeded() {
-        guard !popover.isShown, mouseIsOverStatusButton() else { return }
+        requestHoverOpen()
+    }
+
+    /// 悬停打开的唯一入口：tracking-area 与轮询都走这里，统一处理「关闭后不立即重开」。
+    private func requestHoverOpen() {
+        guard !popover.isShown else { return }
+        if suppressHoverReopen {
+            // 光标仍停在图标上则保持抑制；离开后复位，下次再移入才会打开
+            if !mouseIsOverStatusButton() { suppressHoverReopen = false }
+            return
+        }
+        guard mouseIsOverStatusButton() else { return }
         showPopover()
     }
 
@@ -219,6 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.outsideClickMonitor = nil
         }
         openedViaHotKey = false
+        suppressHoverReopen = true // 防止光标停在图标上时被轮询立刻重开
         popover.performClose(nil)
     }
 
