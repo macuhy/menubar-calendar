@@ -78,6 +78,17 @@ struct SettingsView: View {
             .padding(.top, 8)
 
             HStack {
+                Text("开机时启动")
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+                Toggle("", isOn: $store.launchAtLogin)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+
+            HStack {
                 Text("全局快捷键")
                     .font(.system(size: 12, weight: .medium))
                 Spacer()

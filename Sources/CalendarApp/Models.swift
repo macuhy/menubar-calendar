@@ -89,6 +89,16 @@ final class CalendarStore: ObservableObject {
         }
     }
 
+    /// 开机时启动：以 SMAppService 的注册状态为唯一可信来源，不另行持久化。
+    /// 翻转时调用注册 / 取消，并触发视图刷新以反映真实状态。
+    var launchAtLogin: Bool {
+        get { LaunchAtLogin.isEnabled }
+        set {
+            objectWillChange.send()
+            newValue ? LaunchAtLogin.register() : LaunchAtLogin.unregister()
+        }
+    }
+
     /// 是否已连接系统日历（EventKit 授权通过后为 true，事件双向读写系统日历）
     @Published var usingSystemCalendar = false
     private let ekStore = EKEventStore()
