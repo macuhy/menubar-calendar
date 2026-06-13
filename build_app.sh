@@ -75,5 +75,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP"
-echo "打包完成: $PWD/$APP (v${VERSION} build ${BUILD_NUMBER})"
+# 签名：本地默认 ad-hoc（够本机跑）；CI 传 SIGN_IDENTITY 时用 Developer ID + Hardened Runtime（公证前置条件）
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+    codesign --force --deep --sign - "$APP"
+else
+    FW="$APP/Contents/Frameworks/Sparkle.framework"
+    V="$FW/Versions/B"
+    RT=(--options runtime --timestamp)
+    # 由内到外逐个签名；Sparkle 两个 XPC 服务保留各自（含沙盒）entitlements
+    codesign --force "${RT[@]}" --preserve-metadata=entitlements --sign "$SIGN_IDENTITY" "$V/XPCServices/Downloader.xpc"
+    codesign --force "${RT[@]}" --preserve-metadata=entitlements --sign "$SIGN_IDENTITY" "$V/XPCServices/Installer.xpc"
+    codesign --force "${RT[@]}" --sign "$SIGN_IDENTITY" "$V/Updater.app"
+    codesign --force "${RT[@]}" --sign "$SIGN_IDENTITY" "$V/Autoupdate"
+    codesign --force "${RT[@]}" --sign "$SIGN_IDENTITY" "$FW"
+    codesign --force "${RT[@]}" --sign "$SIGN_IDENTITY" "$APP"
+    codesign --verify --deep --strict --verbose=2 "$APP"
+fi
+echo "打包完成: $PWD/$APP (v${VERSION} build ${BUILD_NUMBER}, 签名: $SIGN_IDENTITY)"
