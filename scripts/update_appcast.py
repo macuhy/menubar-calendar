@@ -61,7 +61,7 @@ def main() -> int:
     )
     ET.SubElement(item, sp("version")).text = build            # CFBundleVersion
     ET.SubElement(item, sp("shortVersionString")).text = version
-    ET.SubElement(item, sp("minimumSystemVersion")).text = "12.0"
+    ET.SubElement(item, sp("minimumSystemVersion")).text = "14.0"  # 与 Package.swift/Info.plist 一致
     if notes_url:
         ET.SubElement(item, sp("releaseNotesLink")).text = notes_url
     ET.SubElement(item, "enclosure", {

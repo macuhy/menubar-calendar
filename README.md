@@ -16,10 +16,9 @@ macOS 菜单栏日历，SwiftUI + SwiftPM 构建，无需 Xcode 工程。
 
 ## 安装
 
-从 [Releases](../../releases) 下载 `Calendar.zip`，解压后把 `日历.app` 拖进「应用程序」。
+从 [Releases](../../releases) 下载 `Calendar.zip`，解压后把 `日历.app` 拖进「应用程序」，直接双击打开即可。
 
-> 应用未经 Apple 公证（无开发者账号签名），首次打开请右键 →「打开」，
-> 或执行：`xattr -dr com.apple.quarantine /Applications/日历.app`
+> 应用已用 Apple Developer ID 签名并经过公证（notarized），下载后无需任何额外操作。
 
 ## 本地构建
 

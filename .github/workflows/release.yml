@@ -92,6 +92,8 @@ jobs:
           # 把公证票据装订进 .app，之后离线也能通过 Gatekeeper
           xcrun stapler staple "build/$APP_NAME.app"
           xcrun stapler validate "build/$APP_NAME.app"
+          # 断言 Gatekeeper 真的接受（公证若回归，这里当场 fail，而非发出去才发现）
+          spctl -a -vvv "build/$APP_NAME.app"
           rm -f "$RUNNER_TEMP/notarize.zip"
 
       - name: Create release ZIP
