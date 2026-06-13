@@ -47,8 +47,8 @@ jobs:
 
       - name: Import Developer ID certificate
         env:
-          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
-          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
           KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
@@ -79,21 +79,20 @@ jobs:
 
       - name: Notarize & staple
         env:
-          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
-          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
-          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          echo "$AC_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/ac_key.p8"
           # 公证需要先打一个 zip 提交；--wait 阻塞到出结果
           ditto -c -k --sequesterRsrc --keepParent "build/$APP_NAME.app" "$RUNNER_TEMP/notarize.zip"
           xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
-            --key "$RUNNER_TEMP/ac_key.p8" --key-id "$AC_API_KEY_ID" --issuer "$AC_API_ISSUER_ID" \
+            --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$APPLE_TEAM_ID" \
             --wait
           # 把公证票据装订进 .app，之后离线也能通过 Gatekeeper
           xcrun stapler staple "build/$APP_NAME.app"
           xcrun stapler validate "build/$APP_NAME.app"
-          rm -f "$RUNNER_TEMP/ac_key.p8" "$RUNNER_TEMP/notarize.zip"
+          rm -f "$RUNNER_TEMP/notarize.zip"
 
       - name: Create release ZIP
         run: |
