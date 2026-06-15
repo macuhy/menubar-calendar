@@ -156,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showPopover(viaHotKey: Bool = false) {
         guard !popover.isShown, let button = statusItem.button else { return }
+        store.refreshCalendarAuthorization()
         openedViaHotKey = viaHotKey
         hoveredSinceHotKeyOpen = false
         applyPopoverAppearance()

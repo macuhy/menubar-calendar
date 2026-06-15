@@ -350,6 +350,12 @@ final class CalendarStore: ObservableObject {
             if !usingSystemCalendar {
                 handleCalendarAccessFailure()
             }
+        case .writeOnly:
+            calendarAccessMessage = "当前只有「添加事件」权限，无法读取日历。请在系统设置中改为「完整访问」。"
+            await prepareForSystemAuthorizationUI(showAnchorWindow: false)
+            openCalendarPrivacySettings()
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            restoreAccessoryActivationPolicy()
         case .denied, .restricted:
             await prepareForSystemAuthorizationUI(showAnchorWindow: false)
             openCalendarPrivacySettings()
@@ -357,7 +363,7 @@ final class CalendarStore: ObservableObject {
             try? await Task.sleep(nanoseconds: 300_000_000)
             restoreAccessoryActivationPolicy()
         default:
-            // .fullAccess / .writeOnly：已授权，直接重连
+            // .fullAccess：已授权，直接重连
             await setupEventKit()
             if !usingSystemCalendar {
                 handleCalendarAccessFailure()
@@ -454,6 +460,9 @@ final class CalendarStore: ObservableObject {
 
     private func handleCalendarAccessFailure() {
         switch EKEventStore.authorizationStatus(for: .event) {
+        case .writeOnly:
+            calendarAccessMessage = "当前只有「添加事件」权限，无法读取日历。请在系统设置中改为「完整访问」。"
+            openCalendarPrivacySettings()
         case .denied, .restricted:
             calendarAccessMessage = "已打开系统设置，请允许「日历」访问系统日历。"
             openCalendarPrivacySettings()
@@ -471,17 +480,34 @@ final class CalendarStore: ObservableObject {
     /// 主动点「去授权」触发（见 requestCalendarAccess，那条路径会先激活前台）。
     private func connectCalendarIfAuthorized() async {
         switch EKEventStore.authorizationStatus(for: .event) {
-        case .fullAccess, .writeOnly:
+        case .fullAccess:
             await setupEventKit()
+        case .writeOnly:
+            usingSystemCalendar = false
+            calendarAccessMessage = "当前只有「添加事件」权限，无法读取日历。请在系统设置中改为「完整访问」。"
         default:
             break
         }
     }
 
     private func setupEventKit() async {
-        let granted = (try? await ekStore.requestFullAccessToEvents()) ?? false
+        let status = EKEventStore.authorizationStatus(for: .event)
+        let granted: Bool
+        switch status {
+        case .fullAccess:
+            granted = true
+        case .writeOnly:
+            granted = false
+            calendarAccessMessage = "当前只有「添加事件」权限，无法读取日历。请在系统设置中改为「完整访问」。"
+        default:
+            granted = (try? await ekStore.requestFullAccessToEvents()) ?? false
+        }
+
         usingSystemCalendar = granted
-        guard granted else { return }
+        guard granted else {
+            handleCalendarAccessFailure()
+            return
+        }
         calendarAccessMessage = nil
         reloadFromEventKit()
         guard ekObserver == nil else { return }
