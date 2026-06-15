@@ -53,6 +53,13 @@ struct SettingsView: View {
             .padding(.horizontal, 12)
             .padding(.top, 10)
 
+            Text("权限状态：\(store.calendarAuthorizationDescription)")
+                .font(.system(size: 10))
+                .foregroundColor(Theme.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.top, 3)
+
             if let message = store.calendarAccessMessage, !store.usingSystemCalendar {
                 Text(message)
                     .font(.system(size: 10))

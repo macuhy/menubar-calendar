@@ -103,7 +103,7 @@ final class CalendarStore: ObservableObject {
     @Published var usingSystemCalendar = false
     @Published private(set) var isRequestingCalendarAccess = false
     @Published var calendarAccessMessage: String?
-    private let ekStore = EKEventStore()
+    private var ekStore = EKEventStore()
     private var ekObserver: NSObjectProtocol?
     private var authorizationWindow: NSWindow?
 
@@ -117,6 +117,23 @@ final class CalendarStore: ObservableObject {
     }
 
     var timeZone: TimeZone { TimeZone(identifier: timeZoneID) ?? .current }
+
+    var calendarAuthorizationDescription: String {
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess:
+            return "完整访问"
+        case .writeOnly:
+            return "仅添加事件"
+        case .denied:
+            return "已拒绝"
+        case .restricted:
+            return "受限制"
+        case .notDetermined:
+            return "未授权"
+        @unknown default:
+            return "未知"
+        }
+    }
 
     var calendar: Calendar {
         var cal = Calendar.current
@@ -503,11 +520,14 @@ final class CalendarStore: ObservableObject {
             granted = (try? await ekStore.requestFullAccessToEvents()) ?? false
         }
 
-        usingSystemCalendar = granted
         guard granted else {
+            usingSystemCalendar = false
             handleCalendarAccessFailure()
             return
         }
+
+        usingSystemCalendar = true
+        rebuildEventStore()
         calendarAccessMessage = nil
         reloadFromEventKit()
         guard ekObserver == nil else { return }
@@ -516,6 +536,14 @@ final class CalendarStore: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in self?.reloadFromEventKit() }
         }
+    }
+
+    private func rebuildEventStore() {
+        if let ekObserver {
+            NotificationCenter.default.removeObserver(ekObserver)
+            self.ekObserver = nil
+        }
+        ekStore = EKEventStore()
     }
 
     /// 把系统日历前1年～后2年的事件读入；跨天事件按天展开（同一 ekID）
