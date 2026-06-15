@@ -130,11 +130,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return timer
     }
 
-    @objc func mouseEntered(with event: NSEvent) {
+    @objc(mouseEntered:)
+    func mouseEntered(with event: NSEvent) {
         requestHoverOpen()
     }
 
-    @objc func mouseExited(with event: NSEvent) {
+    @objc(mouseExited:)
+    func mouseExited(with event: NSEvent) {
         // 离开图标即重新武装悬停打开（轮询也会兜底复位）
         suppressHoverReopen = false
         // 之后由 autoHideTimer 判断鼠标是否已移入面板，否则收起

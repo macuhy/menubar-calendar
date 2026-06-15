@@ -26,6 +26,14 @@ macOS 菜单栏日历，SwiftUI + SwiftPM 构建，无需 Xcode 工程。
 ./build_app.sh        # 产物在 build/日历.app
 ```
 
+## 日历授权排障
+
+如果曾运行过未带 Calendar entitlement 的旧版包，macOS 可能缓存了拒绝结果。更新到新版后仍不弹权限框时，可定向重置本应用的日历授权记录：
+
+```bash
+tccutil reset Calendar com.xiaobo.calendarapp
+```
+
 ## 发布流程
 
 参考 [macuhy/macos-app-release-kit](https://github.com/macuhy/macos-app-release-kit)：

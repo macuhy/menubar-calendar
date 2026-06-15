@@ -341,7 +341,7 @@ final class CalendarStore: ObservableObject {
     // MARK: EventKit 双向同步
 
     /// 用户点「去授权」时调用：未决定 → 弹系统授权框；已拒绝/受限 → 跳系统设置让用户手动开。
-    /// （仅在 Developer ID 签名/公证版上才会真正登记进隐私列表；ad-hoc build 会被 TCC 直接拒绝。）
+    /// （打包签名必须包含 Calendar entitlement；Developer ID 签名/公证版最稳定，本地 ad-hoc 仅用于本机测试。）
     func requestCalendarAccess() {
         guard !isRequestingCalendarAccess else { return }
         Task { await runCalendarAccessFlow() }

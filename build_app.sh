@@ -8,6 +8,12 @@ VERSION="${VERSION:-1.0.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 APPCAST_URL="${APPCAST_URL:-https://raw.githubusercontent.com/macuhy/menubar-calendar/main/appcast.xml}"
 SPARKLE_PUBLIC_KEY="QxXWME0pGom6NLGkoNq6AdkK8h+i+ZttNeED2No5HT8="
+APP_ENTITLEMENTS="Resources/CalendarApp.entitlements"
+
+if [[ ! -f "$APP_ENTITLEMENTS" ]]; then
+    echo "找不到 entitlements 文件: $APP_ENTITLEMENTS" >&2
+    exit 1
+fi
 
 swift build -c release
 
@@ -75,13 +81,23 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 签名：本地默认 ad-hoc（够本机跑）；CI 传 SIGN_IDENTITY 时用 Developer ID + Hardened Runtime（公证前置条件）
+# 签名：主 app 必须带 Calendar entitlement，否则拖入 /Applications 后 TCC 可能直接拒绝授权。
+# 本地默认 ad-hoc 不开启 Hardened Runtime，避免无 Team ID 的本地包触发 Sparkle 库校验失败；
+# CI 传 SIGN_IDENTITY 时用 Developer ID + Hardened Runtime（公证前置条件）。
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+FW="$APP/Contents/Frameworks/Sparkle.framework"
+V="$FW/Versions/B"
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
-    codesign --force --deep --sign - "$APP"
+    RT=()
+    # 由内到外逐个签名；Sparkle 两个 XPC 服务保留各自（含沙盒）entitlements
+    codesign --force "${RT[@]}" --preserve-metadata=entitlements --sign - "$V/XPCServices/Downloader.xpc"
+    codesign --force "${RT[@]}" --preserve-metadata=entitlements --sign - "$V/XPCServices/Installer.xpc"
+    codesign --force "${RT[@]}" --sign - "$V/Updater.app"
+    codesign --force "${RT[@]}" --sign - "$V/Autoupdate"
+    codesign --force "${RT[@]}" --sign - "$FW"
+    codesign --force "${RT[@]}" --entitlements "$APP_ENTITLEMENTS" --sign - "$APP"
+    codesign --verify --deep --strict --verbose=2 "$APP"
 else
-    FW="$APP/Contents/Frameworks/Sparkle.framework"
-    V="$FW/Versions/B"
     RT=(--options runtime --timestamp)
     # 由内到外逐个签名；Sparkle 两个 XPC 服务保留各自（含沙盒）entitlements
     codesign --force "${RT[@]}" --preserve-metadata=entitlements --sign "$SIGN_IDENTITY" "$V/XPCServices/Downloader.xpc"
@@ -89,7 +105,7 @@ else
     codesign --force "${RT[@]}" --sign "$SIGN_IDENTITY" "$V/Updater.app"
     codesign --force "${RT[@]}" --sign "$SIGN_IDENTITY" "$V/Autoupdate"
     codesign --force "${RT[@]}" --sign "$SIGN_IDENTITY" "$FW"
-    codesign --force "${RT[@]}" --sign "$SIGN_IDENTITY" "$APP"
+    codesign --force "${RT[@]}" --entitlements "$APP_ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$APP"
     codesign --verify --deep --strict --verbose=2 "$APP"
 fi
 echo "打包完成: $PWD/$APP (v${VERSION} build ${BUILD_NUMBER}, 签名: $SIGN_IDENTITY)"
