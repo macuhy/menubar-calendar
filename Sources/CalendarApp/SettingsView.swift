@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var store: CalendarStore
     @Environment(\.dismiss) private var dismiss
+    var onDone: (() -> Void)?
     @State private var query = ""
 
     private var filteredZones: [String] {
@@ -18,7 +19,13 @@ struct SettingsView: View {
                 Text("设置")
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
-                Button("完成") { dismiss() }
+                Button("完成") {
+                    if let onDone {
+                        onDone()
+                    } else {
+                        dismiss()
+                    }
+                }
                     .keyboardShortcut(.defaultAction)
             }
             .padding(12)
@@ -138,7 +145,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .frame(width: 340, height: 500)
+        .frame(width: 340, height: 600)
         .background(PanelBackground().ignoresSafeArea())
         .preferredColorScheme(store.appearanceMode.colorScheme)
     }

@@ -104,6 +104,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        store.refreshCalendarAuthorization()
+    }
+
     private func updateTitle() {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")

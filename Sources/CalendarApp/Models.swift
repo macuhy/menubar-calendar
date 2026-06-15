@@ -105,6 +105,7 @@ final class CalendarStore: ObservableObject {
     @Published var calendarAccessMessage: String?
     private let ekStore = EKEventStore()
     private var ekObserver: NSObjectProtocol?
+    private var authorizationWindow: NSWindow?
 
     /// 系统日历事件的自选颜色（EventKit 不支持逐事件颜色，本地记住用户的选择）ekID -> colorIndex
     private var colorOverrides: [String: Int] =
@@ -262,6 +263,10 @@ final class CalendarStore: ObservableObject {
         }
     }
 
+    func refreshCalendarAuthorization() {
+        Task { await connectCalendarIfAuthorized() }
+    }
+
     func update(_ event: CalendarEvent) {
         if usingSystemCalendar, let ekID = event.ekID {
             guard let ek = ekStore.event(withIdentifier: ekID) else { return }
@@ -336,16 +341,17 @@ final class CalendarStore: ObservableObject {
             // 关键：本应用是无 Dock 图标的 accessory 应用。若在「非前台活跃」状态下请求，
             // 系统会静默抑制 EventKit 授权弹窗——回调 granted=false 且状态仍停留在 .notDetermined，
             // 用户看不到任何弹框，表现就是「怎么点都授权不了」。这里临时切到 regular，
-            // 等前台激活真正完成后再请求，随后恢复为菜单栏应用。
-            await prepareForSystemAuthorizationUI()
+            // 并显示一个真实前台窗口，等前台激活真正完成后再请求，随后恢复为菜单栏应用。
+            await prepareForSystemAuthorizationUI(showAnchorWindow: true)
             await setupEventKit()
+            closeAuthorizationAnchorWindow()
             restoreAccessoryActivationPolicy()
 
             if !usingSystemCalendar {
                 handleCalendarAccessFailure()
             }
         case .denied, .restricted:
-            await prepareForSystemAuthorizationUI()
+            await prepareForSystemAuthorizationUI(showAnchorWindow: false)
             openCalendarPrivacySettings()
             calendarAccessMessage = "已打开系统设置，请在「日历」权限里允许访问。"
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -359,15 +365,84 @@ final class CalendarStore: ObservableObject {
         }
     }
 
-    private func prepareForSystemAuthorizationUI() async {
+    private func prepareForSystemAuthorizationUI(showAnchorWindow: Bool) async {
         NSApp.setActivationPolicy(.regular)
         NSApp.unhide(nil)
+        if showAnchorWindow {
+            showAuthorizationAnchorWindow()
+        }
         NSApp.activate(ignoringOtherApps: true)
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        authorizationWindow?.makeKeyAndOrderFront(nil)
+        try? await Task.sleep(nanoseconds: 500_000_000)
     }
 
     private func restoreAccessoryActivationPolicy() {
         NSApp.setActivationPolicy(.accessory)
+    }
+
+    private func showAuthorizationAnchorWindow() {
+        if let authorizationWindow {
+            authorizationWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 150),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "日历权限"
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.collectionBehavior = [.moveToActiveSpace]
+
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .regular
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.startAnimation(nil)
+
+        let title = NSTextField(labelWithString: "正在请求系统日历权限")
+        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.translatesAutoresizingMaskIntoConstraints = false
+
+        let detail = NSTextField(wrappingLabelWithString: "请在系统弹窗中允许访问日历。若没有看到弹窗，应用会自动打开系统设置。")
+        detail.font = .systemFont(ofSize: 12)
+        detail.textColor = .secondaryLabelColor
+        detail.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(spinner)
+        container.addSubview(title)
+        container.addSubview(detail)
+        window.contentView = container
+
+        NSLayoutConstraint.activate([
+            spinner.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 22),
+            spinner.topAnchor.constraint(equalTo: container.topAnchor, constant: 28),
+            spinner.widthAnchor.constraint(equalToConstant: 24),
+            spinner.heightAnchor.constraint(equalToConstant: 24),
+
+            title.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 14),
+            title.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -22),
+            title.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
+
+            detail.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            detail.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            detail.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 10)
+        ])
+
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        authorizationWindow = window
+    }
+
+    private func closeAuthorizationAnchorWindow() {
+        authorizationWindow?.close()
+        authorizationWindow = nil
     }
 
     private func openCalendarPrivacySettings() {
@@ -380,10 +455,11 @@ final class CalendarStore: ObservableObject {
     private func handleCalendarAccessFailure() {
         switch EKEventStore.authorizationStatus(for: .event) {
         case .denied, .restricted:
-            calendarAccessMessage = "日历权限未开启，请在系统设置中允许访问。"
+            calendarAccessMessage = "已打开系统设置，请允许「日历」访问系统日历。"
             openCalendarPrivacySettings()
         case .notDetermined:
-            calendarAccessMessage = "授权窗口未弹出，请再点一次或到系统设置手动开启日历权限。"
+            calendarAccessMessage = "系统没有显示授权弹窗，已打开系统设置，请允许「日历」访问系统日历。"
+            openCalendarPrivacySettings()
         default:
             calendarAccessMessage = "未能连接系统日历，请稍后重试。"
         }
@@ -408,6 +484,7 @@ final class CalendarStore: ObservableObject {
         guard granted else { return }
         calendarAccessMessage = nil
         reloadFromEventKit()
+        guard ekObserver == nil else { return }
         ekObserver = NotificationCenter.default.addObserver(
             forName: .EKEventStoreChanged, object: ekStore, queue: .main
         ) { [weak self] _ in

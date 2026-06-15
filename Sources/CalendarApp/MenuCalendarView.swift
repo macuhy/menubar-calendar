@@ -16,6 +16,37 @@ struct MenuCalendarView: View {
     @State private var showingSettings = false
 
     var body: some View {
+        Group {
+            if showingSettings {
+                SettingsView {
+                    showingSettings = false
+                }
+            } else {
+                calendarPanel
+            }
+        }
+        .frame(width: 340, height: 600)
+        .background(PanelBackground().ignoresSafeArea())
+        .preferredColorScheme(store.appearanceMode.colorScheme)
+        .sheet(item: $creating) { target in
+            EventEditorView(mode: .create(initialDate: target.date))
+                .preferredColorScheme(store.appearanceMode.colorScheme)
+        }
+        .sheet(item: $editingEvent) { event in
+            EventEditorView(mode: .edit(event))
+                .preferredColorScheme(store.appearanceMode.colorScheme)
+        }
+        .onAppear {
+            publishSheetBehavior()
+        }
+        .onDisappear {
+            publishSheetBehavior(keepOpen: false)
+        }
+        .onChange(of: creating != nil) { _, _ in publishSheetBehavior() }
+        .onChange(of: editingEvent != nil) { _, _ in publishSheetBehavior() }
+    }
+
+    private var calendarPanel: some View {
         VStack(spacing: 0) {
             header
                 .padding(.horizontal, 12)
@@ -37,30 +68,6 @@ struct MenuCalendarView: View {
 
             footer
         }
-        .frame(width: 340, height: 600)
-        .background(PanelBackground().ignoresSafeArea())
-        .preferredColorScheme(store.appearanceMode.colorScheme)
-        .sheet(item: $creating) { target in
-            EventEditorView(mode: .create(initialDate: target.date))
-                .preferredColorScheme(store.appearanceMode.colorScheme)
-        }
-        .sheet(item: $editingEvent) { event in
-            EventEditorView(mode: .edit(event))
-                .preferredColorScheme(store.appearanceMode.colorScheme)
-        }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView()
-                .preferredColorScheme(store.appearanceMode.colorScheme)
-        }
-        .onAppear {
-            publishSheetBehavior()
-        }
-        .onDisappear {
-            publishSheetBehavior(keepOpen: false)
-        }
-        .onChange(of: creating != nil) { _, _ in publishSheetBehavior() }
-        .onChange(of: editingEvent != nil) { _, _ in publishSheetBehavior() }
-        .onChange(of: showingSettings) { _, _ in publishSheetBehavior() }
     }
 
     private func publishSheetBehavior(keepOpen: Bool? = nil) {
