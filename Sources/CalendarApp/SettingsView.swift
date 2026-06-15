@@ -60,7 +60,7 @@ struct SettingsView: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 3)
 
-            if let message = store.calendarAccessMessage, !store.usingSystemCalendar {
+            if let message = store.calendarAccessMessage {
                 Text(message)
                     .font(.system(size: 10))
                     .foregroundColor(Theme.secondaryText)

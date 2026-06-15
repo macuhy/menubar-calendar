@@ -21,6 +21,7 @@ struct EventEditorView: View {
     @State private var endTime: Date
     @State private var colorIndex: Int
     @State private var notes: String
+    @State private var timeAdjustmentMessage: String?
 
     init(mode: EditorMode) {
         self.mode = mode
@@ -54,11 +55,32 @@ struct EventEditorView: View {
     }
 
     private var canSave: Bool {
-        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !trimmedTitle.isEmpty && timeRangeIsValid
+    }
+
+    private var trimmedTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var timeRangeIsValid: Bool {
+        endTime > startTime
     }
 
     private var pickerComponents: DatePickerComponents {
         isAllDay ? [.date] : [.date, .hourAndMinute]
+    }
+
+    private var validationMessage: (text: String, isError: Bool)? {
+        if trimmedTitle.isEmpty {
+            return ("请输入事件标题后才能保存。", true)
+        }
+        if !timeRangeIsValid {
+            return (isAllDay ? "结束日期必须晚于开始日期。" : "结束时间必须晚于开始时间。", true)
+        }
+        if let timeAdjustmentMessage {
+            return (timeAdjustmentMessage, false)
+        }
+        return nil
     }
 
     var body: some View {
@@ -93,6 +115,14 @@ struct EventEditorView: View {
                     .frame(width: 36, alignment: .leading)
                 DatePicker("", selection: $endTime, displayedComponents: pickerComponents)
                     .labelsHidden()
+            }
+
+            if let validationMessage {
+                Text(validationMessage.text)
+                    .font(.caption)
+                    .foregroundColor(validationMessage.isError ? .red : Theme.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("event-editor-validation-message")
             }
 
             Divider()
@@ -162,19 +192,29 @@ struct EventEditorView: View {
         .padding(20)
         .frame(width: 420, height: 520)
         .background(PanelBackground().ignoresSafeArea())
-        .onChange(of: startTime) { _, newStart in
-            if endTime < newStart {
-                endTime = store.calendar.date(byAdding: .hour, value: 1, to: newStart) ?? newStart
-            }
+        .onAppear {
+            normalizeTimes(showMessage: false)
+        }
+        .onChange(of: isAllDay) { _, _ in
+            normalizeTimes(showMessage: true)
+        }
+        .onChange(of: startTime) { _, _ in
+            normalizeTimes(showMessage: true)
+        }
+        .onChange(of: endTime) { _, _ in
+            normalizeTimes(showMessage: true)
         }
     }
 
     private func save() {
+        normalizeTimes(showMessage: true)
+        guard canSave else { return }
+
         let day = store.calendar.startOfDay(for: startTime)
         switch mode {
         case .create:
             let event = CalendarEvent(
-                title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                title: trimmedTitle,
                 date: day,
                 startTime: startTime,
                 endTime: endTime,
@@ -186,7 +226,7 @@ struct EventEditorView: View {
             store.add(event)
         case .edit(let original):
             var event = original
-            event.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            event.title = trimmedTitle
             event.date = day
             event.startTime = startTime
             event.endTime = endTime
@@ -197,5 +237,60 @@ struct EventEditorView: View {
             store.update(event)
         }
         dismiss()
+    }
+
+    private func normalizeTimes(showMessage: Bool) {
+        if isAllDay {
+            normalizeAllDayTimes(showMessage: showMessage)
+        } else {
+            normalizeTimedEvent(showMessage: showMessage)
+        }
+    }
+
+    private func normalizeTimedEvent(showMessage: Bool) {
+        guard endTime <= startTime else {
+            timeAdjustmentMessage = nil
+            return
+        }
+
+        endTime = oneHourAfter(startTime)
+        if showMessage {
+            timeAdjustmentMessage = "结束时间已自动调整为开始后一小时。"
+        }
+    }
+
+    private func normalizeAllDayTimes(showMessage: Bool) {
+        let dayStart = store.calendar.startOfDay(for: startTime)
+        let dayEnd = store.calendar.startOfDay(for: endTime)
+        var adjustedMessage: String?
+
+        if startTime != dayStart {
+            startTime = dayStart
+            adjustedMessage = "全天事件只保留日期，开始时间已调整为当天 00:00。"
+        }
+
+        if endTime != dayEnd {
+            endTime = dayEnd
+            adjustedMessage = "全天事件只保留日期，结束时间已调整为当天 00:00。"
+        }
+
+        if dayEnd <= dayStart {
+            endTime = nextDay(after: dayStart)
+            adjustedMessage = "结束日期已自动调整为开始日期后一天，确保全天事件有效。"
+        }
+
+        if showMessage {
+            timeAdjustmentMessage = adjustedMessage
+        } else if adjustedMessage == nil {
+            timeAdjustmentMessage = nil
+        }
+    }
+
+    private func oneHourAfter(_ date: Date) -> Date {
+        store.calendar.date(byAdding: .hour, value: 1, to: date) ?? date.addingTimeInterval(60 * 60)
+    }
+
+    private func nextDay(after date: Date) -> Date {
+        store.calendar.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(24 * 60 * 60)
     }
 }

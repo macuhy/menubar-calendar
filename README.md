@@ -42,9 +42,11 @@ tccutil reset Calendar com.xiaobo.calendarapp
 git tag v1.1.0 && git push origin v1.1.0
 ```
 
-GitHub Actions 会自动：编译 → 打包 → Sparkle EdDSA 签名 → 创建 Release → 更新 `appcast.xml`。
+GitHub Actions 会自动：测试 → 编译 → 打包 → Sparkle EdDSA 签名 → 创建 Release → 更新 `appcast.xml`。
 已安装的 App 之后会通过 Sparkle 弹窗提示更新。
 
 - 版本号取自 tag（`v1.1.0` → `CFBundleShortVersionString=1.1.0`）
 - build 号用 `git rev-list --count HEAD` 自动生成，保证递增
-- 唯一需要的仓库 Secret：`SPARKLE_PRIVATE_KEY`
+- Sparkle 命令行工具版本从 `Package.resolved` 的 Sparkle pin 读取，避免与依赖版本漂移
+- Sparkle 签名需要仓库 Secret：`SPARKLE_PRIVATE_KEY`
+- Developer ID 签名和公证需要 workflow 顶部列出的 Apple/证书相关 Secrets

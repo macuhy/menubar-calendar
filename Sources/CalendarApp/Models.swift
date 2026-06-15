@@ -57,12 +57,21 @@ enum CalendarAppearanceMode: String, CaseIterable, Identifiable {
     }
 }
 
+private struct DayKey: Hashable {
+    let year: Int
+    let month: Int
+    let day: Int
+}
+
 // MARK: - Store
 
 @MainActor
 final class CalendarStore: ObservableObject {
     @Published var events: [CalendarEvent] = [] {
-        didSet { save() }
+        didSet {
+            rebuildEventIndex()
+            save()
+        }
     }
     @Published var displayedMonth: Date   // any date inside the displayed month
     @Published var selectedDate: Date     // currently selected day
@@ -72,7 +81,11 @@ final class CalendarStore: ObservableObject {
         didSet {
             UserDefaults.standard.set(timeZoneID, forKey: "displayTimeZone")
             DisplayTimeZone.current = TimeZone(identifier: timeZoneID) ?? .current
-            if usingSystemCalendar { reloadFromEventKit() } // 重新按新时区给事件分桶
+            if usingSystemCalendar {
+                reloadFromEventKit() // 重新按新时区给事件分桶
+            } else {
+                rebuildEventIndex()
+            }
         }
     }
 
@@ -106,14 +119,24 @@ final class CalendarStore: ObservableObject {
     private var ekStore = EKEventStore()
     private var ekObserver: NSObjectProtocol?
     private var authorizationWindow: NSWindow?
+    private var eventIndex: [DayKey: [CalendarEvent]] = [:]
 
     /// 系统日历事件的自选颜色（EventKit 不支持逐事件颜色，本地记住用户的选择）ekID -> colorIndex
     private var colorOverrides: [String: Int] =
         UserDefaults.standard.dictionary(forKey: "eventColorOverrides") as? [String: Int] ?? [:]
 
+    private static let importedLocalEventIDsKey = "importedLocalEventIDs"
+    private var importedLocalEventIDs = Set(
+        UserDefaults.standard.stringArray(forKey: importedLocalEventIDsKey) ?? []
+    )
+
     private func setColorOverride(_ index: Int?, for ekID: String) {
         colorOverrides[ekID] = index
         UserDefaults.standard.set(colorOverrides, forKey: "eventColorOverrides")
+    }
+
+    private func persistImportedLocalEventIDs() {
+        UserDefaults.standard.set(Array(importedLocalEventIDs), forKey: Self.importedLocalEventIDsKey)
     }
 
     var timeZone: TimeZone { TimeZone(identifier: timeZoneID) ?? .current }
@@ -175,7 +198,10 @@ final class CalendarStore: ObservableObject {
         self.selectedDate = today
         applyAppearance()
         load()
+#if DEBUG
         if events.isEmpty { seedSampleEvents() }
+#endif
+        rebuildEventIndex()
 
         // 启动只做「已授权则静默重连」，不在后台触发弹窗（详见 connectCalendarIfAuthorized 注释）
         Task { await connectCalendarIfAuthorized() }
@@ -190,12 +216,92 @@ final class CalendarStore: ObservableObject {
         NSApp.appearance = appearanceMode.nsAppearanceName.flatMap { NSAppearance(named: $0) }
     }
 
+    private func dayKey(for date: Date) -> DayKey? {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year, let month = components.month, let day = components.day else {
+            return nil
+        }
+        return DayKey(year: year, month: month, day: day)
+    }
+
+    private func rebuildEventIndex() {
+        var index: [DayKey: [CalendarEvent]] = [:]
+        for event in events {
+            guard let key = dayKey(for: event.date) else { continue }
+            index[key, default: []].append(event)
+        }
+        eventIndex = index.mapValues { events in
+            events.sorted { $0.startTime < $1.startTime }
+        }
+    }
+
+    private func normalizedEvent(_ event: CalendarEvent) -> CalendarEvent {
+        var normalized = event
+        let cal = calendar
+        let day = cal.startOfDay(for: normalized.startTime)
+
+        if normalized.isAllDay {
+            normalized.startTime = day
+            normalized.endTime = cal.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86_400)
+        } else if normalized.endTime <= normalized.startTime {
+            normalized.endTime = cal.date(byAdding: .hour, value: 1, to: normalized.startTime)
+                ?? normalized.startTime.addingTimeInterval(3_600)
+        }
+
+        normalized.date = cal.startOfDay(for: normalized.startTime)
+        normalized.title = normalized.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        normalized.location = normalized.location.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized
+    }
+
+    private func reportCalendarOperationError(_ prefix: String, _ error: Error) {
+        let message = "\(prefix)：\(error.localizedDescription)"
+        calendarAccessMessage = message
+        NSLog("%@", message)
+    }
+
+    private func importLocalEventsIfNeeded(_ localEvents: [CalendarEvent]) {
+        let candidates = localEvents.filter { event in
+            event.ekID == nil && !importedLocalEventIDs.contains(event.id.uuidString)
+        }
+        guard !candidates.isEmpty else { return }
+
+        var importedCount = 0
+        var failedCount = 0
+
+        for candidate in candidates {
+            let event = normalizedEvent(candidate)
+            let ek = EKEvent(eventStore: ekStore)
+            ek.calendar = ekStore.defaultCalendarForNewEvents
+            apply(event, to: ek)
+
+            do {
+                try ekStore.save(ek, span: .thisEvent, commit: true)
+                importedLocalEventIDs.insert(candidate.id.uuidString)
+                if let id = ek.eventIdentifier {
+                    setColorOverride(event.colorIndex, for: id)
+                }
+                importedCount += 1
+            } catch {
+                failedCount += 1
+                NSLog("导入本地日程失败：%@", error.localizedDescription)
+            }
+        }
+
+        if importedCount > 0 {
+            persistImportedLocalEventIDs()
+            calendarAccessMessage = "已将 \(importedCount) 个本地日程导入系统日历。"
+        }
+        if failedCount > 0 {
+            calendarAccessMessage = "有 \(failedCount) 个本地日程未能导入系统日历，请稍后重试。"
+        }
+    }
+
     // MARK: Queries
 
     func events(on day: Date) -> [CalendarEvent] {
-        events
-            .filter { calendar.isDate($0.date, inSameDayAs: day) }
-            .sorted { $0.startTime < $1.startTime }
+        guard let key = dayKey(for: day) else { return [] }
+        return eventIndex[key] ?? []
     }
 
     /// All day cells (including leading/trailing days of adjacent months) for the displayed month — always 42 cells (6 weeks).
@@ -221,11 +327,7 @@ final class CalendarStore: ObservableObject {
         let today = calendar.startOfDay(for: Date())
         let excludedKeys: Set<String>
         if let excludedDay {
-            excludedKeys = Set(
-                events
-                    .filter { calendar.isDate($0.date, inSameDayAs: excludedDay) }
-                    .map { $0.ekID ?? $0.id.uuidString }
-            )
+            excludedKeys = Set(events(on: excludedDay).map { $0.ekID ?? $0.id.uuidString })
         } else {
             excludedKeys = []
         }
@@ -268,13 +370,18 @@ final class CalendarStore: ObservableObject {
     // MARK: Mutations（系统日历模式下直接写回 EventKit）
 
     func add(_ event: CalendarEvent) {
+        let event = normalizedEvent(event)
         if usingSystemCalendar {
             let ek = EKEvent(eventStore: ekStore)
             ek.calendar = ekStore.defaultCalendarForNewEvents
             apply(event, to: ek)
-            try? ekStore.save(ek, span: .thisEvent, commit: true)
-            if let id = ek.eventIdentifier { setColorOverride(event.colorIndex, for: id) }
-            reloadFromEventKit()
+            do {
+                try ekStore.save(ek, span: .thisEvent, commit: true)
+                if let id = ek.eventIdentifier { setColorOverride(event.colorIndex, for: id) }
+                reloadFromEventKit()
+            } catch {
+                reportCalendarOperationError("添加系统日历事件失败", error)
+            }
         } else {
             events.append(event)
         }
@@ -285,12 +392,21 @@ final class CalendarStore: ObservableObject {
     }
 
     func update(_ event: CalendarEvent) {
+        let event = normalizedEvent(event)
         if usingSystemCalendar, let ekID = event.ekID {
-            guard let ek = ekStore.event(withIdentifier: ekID) else { return }
+            guard let ek = ekStore.event(withIdentifier: ekID) else {
+                calendarAccessMessage = "找不到要更新的系统日历事件，可能已被其他应用删除。"
+                reloadFromEventKit()
+                return
+            }
             apply(event, to: ek)
-            try? ekStore.save(ek, span: .thisEvent, commit: true)
-            setColorOverride(event.colorIndex, for: ekID)
-            reloadFromEventKit()
+            do {
+                try ekStore.save(ek, span: .thisEvent, commit: true)
+                setColorOverride(event.colorIndex, for: ekID)
+                reloadFromEventKit()
+            } catch {
+                reportCalendarOperationError("更新系统日历事件失败", error)
+            }
         } else if let i = events.firstIndex(where: { $0.id == event.id }) {
             events[i] = event
         }
@@ -298,10 +414,18 @@ final class CalendarStore: ObservableObject {
 
     func delete(_ event: CalendarEvent) {
         if usingSystemCalendar, let ekID = event.ekID {
-            guard let ek = ekStore.event(withIdentifier: ekID) else { return }
-            try? ekStore.remove(ek, span: .thisEvent, commit: true)
-            setColorOverride(nil, for: ekID)
-            reloadFromEventKit()
+            guard let ek = ekStore.event(withIdentifier: ekID) else {
+                calendarAccessMessage = "找不到要删除的系统日历事件，可能已被其他应用删除。"
+                reloadFromEventKit()
+                return
+            }
+            do {
+                try ekStore.remove(ek, span: .thisEvent, commit: true)
+                setColorOverride(nil, for: ekID)
+                reloadFromEventKit()
+            } catch {
+                reportCalendarOperationError("删除系统日历事件失败", error)
+            }
         } else {
             events.removeAll { $0.id == event.id }
         }
@@ -526,9 +650,11 @@ final class CalendarStore: ObservableObject {
             return
         }
 
+        let localEventsToImport = events.filter { $0.ekID == nil }
         usingSystemCalendar = true
         rebuildEventStore()
         calendarAccessMessage = nil
+        importLocalEventsIfNeeded(localEventsToImport)
         reloadFromEventKit()
         guard ekObserver == nil else { return }
         ekObserver = NotificationCenter.default.addObserver(
