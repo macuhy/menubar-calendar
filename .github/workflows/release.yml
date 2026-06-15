@@ -17,7 +17,6 @@ permissions:
 env:
   APP_NAME: 日历
   ZIP_NAME: Calendar.zip
-  DOWNLOAD_URL_PREFIX: https://github.com/uhyrdtrdtfg-creator/menubar-calendar/releases/download/
 
 jobs:
   release:
@@ -148,7 +147,7 @@ jobs:
           git fetch origin main && git checkout main
           python3 scripts/update_appcast.py appcast.xml \
             "$APP_NAME" "$VERSION" "$BUILD_NUMBER" "$ed_signature" "$length" \
-            "${DOWNLOAD_URL_PREFIX}${TAG}/${ZIP_NAME}" \
+            "https://github.com/${{ github.repository }}/releases/download/${TAG}/${ZIP_NAME}" \
             "https://github.com/${{ github.repository }}/releases/tag/$TAG"
           git add appcast.xml
           git diff --cached --quiet || git commit -m "release: $APP_NAME $VERSION (build $BUILD_NUMBER)"

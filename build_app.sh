@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 VERSION="${VERSION:-1.0.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
-APPCAST_URL="https://raw.githubusercontent.com/uhyrdtrdtfg-creator/menubar-calendar/main/appcast.xml"
+APPCAST_URL="${APPCAST_URL:-https://raw.githubusercontent.com/macuhy/menubar-calendar/main/appcast.xml}"
 SPARKLE_PUBLIC_KEY="QxXWME0pGom6NLGkoNq6AdkK8h+i+ZttNeED2No5HT8="
 
 swift build -c release
