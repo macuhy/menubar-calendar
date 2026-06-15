@@ -52,6 +52,24 @@ struct MenuCalendarView: View {
             SettingsView()
                 .preferredColorScheme(store.appearanceMode.colorScheme)
         }
+        .onAppear {
+            publishSheetBehavior()
+        }
+        .onDisappear {
+            publishSheetBehavior(keepOpen: false)
+        }
+        .onChange(of: creating != nil) { _, _ in publishSheetBehavior() }
+        .onChange(of: editingEvent != nil) { _, _ in publishSheetBehavior() }
+        .onChange(of: showingSettings) { _, _ in publishSheetBehavior() }
+    }
+
+    private func publishSheetBehavior(keepOpen: Bool? = nil) {
+        let shouldKeepOpen = keepOpen ?? (creating != nil || editingEvent != nil)
+        NotificationCenter.default.post(
+            name: .calendarPopoverSheetBehaviorChanged,
+            object: nil,
+            userInfo: ["keepOpen": shouldKeepOpen]
+        )
     }
 
     // MARK: - Header

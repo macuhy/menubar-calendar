@@ -21,12 +21,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var titleTimer: Timer?
     private var storeSubscription: AnyCancellable?
     private var appearanceSubscription: AnyCancellable?
+    private var sheetBehaviorObserver: NSObjectProtocol?
     private var hotKey: GlobalHotKey?
     /// 由快捷键打开且鼠标尚未移入面板时，悬停检测不收起面板
     private var openedViaHotKey = false
     private var hoveredSinceHotKeyOpen = false
     /// 刚关闭后若光标仍停在图标上，先不重开；待光标离开图标再恢复悬停打开
     private var suppressHoverReopen = false
+    private var keepOpenWhileSheetIsPresented = false
     private var outsideClickMonitor: Any?
     private var escKeyMonitor: Any?
     let store = CalendarStore()
@@ -63,11 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         // 每秒检查一次，标题文本变化（跨分钟）时才真正刷新
-        titleTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        titleTimer = scheduleRepeatingTimer(interval: 1) { [weak self] _ in
             Task { @MainActor in self?.updateTitle() }
         }
         // 菜单栏按钮的 tracking event 偶尔会被系统状态栏吞掉，轮询鼠标位置更稳定。
-        hoverOpenTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
+        hoverOpenTimer = scheduleRepeatingTimer(interval: 0.12) { [weak self] _ in
             Task { @MainActor in self?.openOnMenuBarHoverIfNeeded() }
         }
 
@@ -77,6 +79,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         appearanceSubscription = store.$appearanceMode.sink { [weak self] _ in
             Task { @MainActor in self?.applyPopoverAppearance() }
+        }
+        sheetBehaviorObserver = NotificationCenter.default.addObserver(
+            forName: .calendarPopoverSheetBehaviorChanged, object: nil, queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in
+                self?.keepOpenWhileSheetIsPresented = note.userInfo?["keepOpen"] as? Bool ?? false
+            }
         }
 
         // 全局快捷键 ⌃⌥C：显示 / 隐藏面板
@@ -107,6 +116,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Hover open / auto close
+
+    private func scheduleRepeatingTimer(
+        interval: TimeInterval,
+        handler: @escaping @Sendable (Timer) -> Void
+    ) -> Timer {
+        let timer = Timer(timeInterval: interval, repeats: true, block: handler)
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
+    }
 
     @objc func mouseEntered(with event: NSEvent) {
         requestHoverOpen()
@@ -235,6 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         openedViaHotKey = false
         suppressHoverReopen = true // 防止光标停在图标上时被轮询立刻重开
+        keepOpenWhileSheetIsPresented = false
         popover.performClose(nil)
     }
 
@@ -242,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startAutoHideMonitor() {
         autoHideTimer?.invalidate()
         var graceTicks = 3 // 刚弹出后约 0.6s 宽限，避免从按钮移向面板途中被收起
-        autoHideTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+        autoHideTimer = scheduleRepeatingTimer(interval: 0.2) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.popover.isShown else {
                     self?.autoHideTimer?.invalidate()
@@ -268,7 +287,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
         if let panel = popover.contentViewController?.view.window {
-            if panel.attachedSheet != nil { return true } // 正在编辑事件，不收起
+            if keepOpenWhileSheetIsPresented, panel.attachedSheet != nil { return true }
+            if let sheet = panel.attachedSheet,
+               sheet.frame.insetBy(dx: -20, dy: -20).contains(mouse) {
+                return true
+            }
             if panel.frame.insetBy(dx: -20, dy: -20).contains(mouse) { return true }
         }
         return false
@@ -289,4 +312,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let point = NSPoint(x: rect.midX, y: rect.midY)
         return NSScreen.screens.first { $0.frame.contains(point) }
     }
+}
+
+extension Notification.Name {
+    static let calendarPopoverSheetBehaviorChanged = Notification.Name("calendarPopoverSheetBehaviorChanged")
 }

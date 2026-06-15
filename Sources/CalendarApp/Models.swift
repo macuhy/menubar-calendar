@@ -101,6 +101,8 @@ final class CalendarStore: ObservableObject {
 
     /// 是否已连接系统日历（EventKit 授权通过后为 true，事件双向读写系统日历）
     @Published var usingSystemCalendar = false
+    @Published private(set) var isRequestingCalendarAccess = false
+    @Published var calendarAccessMessage: String?
     private let ekStore = EKEventStore()
     private var ekObserver: NSObjectProtocol?
 
@@ -319,19 +321,71 @@ final class CalendarStore: ObservableObject {
     /// 用户点「去授权」时调用：未决定 → 弹系统授权框；已拒绝/受限 → 跳系统设置让用户手动开。
     /// （仅在 Developer ID 签名/公证版上才会真正登记进隐私列表；ad-hoc build 会被 TCC 直接拒绝。）
     func requestCalendarAccess() {
-        switch EKEventStore.authorizationStatus(for: .event) {
+        guard !isRequestingCalendarAccess else { return }
+        Task { await runCalendarAccessFlow() }
+    }
+
+    private func runCalendarAccessFlow() async {
+        isRequestingCalendarAccess = true
+        calendarAccessMessage = nil
+        defer { isRequestingCalendarAccess = false }
+
+        let status = EKEventStore.authorizationStatus(for: .event)
+        switch status {
         case .notDetermined:
             // 关键：本应用是无 Dock 图标的 accessory 应用。若在「非前台活跃」状态下请求，
             // 系统会静默抑制 EventKit 授权弹窗——回调 granted=false 且状态仍停留在 .notDetermined，
-            // 用户看不到任何弹框，表现就是「怎么点都授权不了」。必须先把自己激活到前台，弹窗才会出现。
-            NSApp.activate(ignoringOtherApps: true)
-            Task { await setupEventKit() }
+            // 用户看不到任何弹框，表现就是「怎么点都授权不了」。这里临时切到 regular，
+            // 等前台激活真正完成后再请求，随后恢复为菜单栏应用。
+            await prepareForSystemAuthorizationUI()
+            await setupEventKit()
+            restoreAccessoryActivationPolicy()
+
+            if !usingSystemCalendar {
+                handleCalendarAccessFailure()
+            }
         case .denied, .restricted:
-            NSWorkspace.shared.open(URL(string:
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!)
+            await prepareForSystemAuthorizationUI()
+            openCalendarPrivacySettings()
+            calendarAccessMessage = "已打开系统设置，请在「日历」权限里允许访问。"
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            restoreAccessoryActivationPolicy()
         default:
             // .fullAccess / .writeOnly：已授权，直接重连
-            Task { await setupEventKit() }
+            await setupEventKit()
+            if !usingSystemCalendar {
+                handleCalendarAccessFailure()
+            }
+        }
+    }
+
+    private func prepareForSystemAuthorizationUI() async {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.unhide(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        try? await Task.sleep(nanoseconds: 250_000_000)
+    }
+
+    private func restoreAccessoryActivationPolicy() {
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    private func openCalendarPrivacySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func handleCalendarAccessFailure() {
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .denied, .restricted:
+            calendarAccessMessage = "日历权限未开启，请在系统设置中允许访问。"
+            openCalendarPrivacySettings()
+        case .notDetermined:
+            calendarAccessMessage = "授权窗口未弹出，请再点一次或到系统设置手动开启日历权限。"
+        default:
+            calendarAccessMessage = "未能连接系统日历，请稍后重试。"
         }
     }
 
@@ -352,6 +406,7 @@ final class CalendarStore: ObservableObject {
         let granted = (try? await ekStore.requestFullAccessToEvents()) ?? false
         usingSystemCalendar = granted
         guard granted else { return }
+        calendarAccessMessage = nil
         reloadFromEventKit()
         ekObserver = NotificationCenter.default.addObserver(
             forName: .EKEventStoreChanged, object: ekStore, queue: .main

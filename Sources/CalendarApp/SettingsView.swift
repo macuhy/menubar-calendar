@@ -36,12 +36,25 @@ struct SettingsView: View {
                     .foregroundColor(Theme.secondaryText)
                 Spacer()
                 if !store.usingSystemCalendar {
-                    Button("去授权") { store.requestCalendarAccess() }
+                    Button(store.isRequestingCalendarAccess ? "授权中…" : "去授权") {
+                        store.requestCalendarAccess()
+                    }
                         .font(.system(size: 11))
+                        .disabled(store.isRequestingCalendarAccess)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.top, 10)
+
+            if let message = store.calendarAccessMessage, !store.usingSystemCalendar {
+                Text(message)
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+            }
 
             HStack {
                 Text("每周开始于")
