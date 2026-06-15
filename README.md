@@ -28,6 +28,17 @@ macOS 菜单栏日历，SwiftUI + SwiftPM 构建，无需 Xcode 工程。
 
 ## 日历授权排障
 
+### 授权修复要点
+
+这个 App 是无 Dock 图标的菜单栏应用（`LSUIElement` / accessory 模式），如果启动时或非前台状态下直接请求 EventKit 权限，macOS 可能不会显示授权弹窗，表现为“点了授权但没有反应”。当前修复做了几件事：
+
+- 打包签名时给主 App 带上 `com.apple.security.personal-information.calendars` entitlement，并在 `Info.plist` 写入日历用途说明。
+- 启动时只在已授权的情况下静默连接系统日历；未授权的新用户必须在设置里主动点“去授权”，避免后台请求浪费系统弹窗机会。
+- 点“去授权”时临时把应用切到前台 regular 模式，并显示一个“日历权限”锚点窗口，再调用 `requestFullAccessToEvents()`，确保系统授权弹窗能正常出现。
+- 授权完成后重新创建 `EKEventStore` 并重新订阅 `.EKEventStoreChanged`，避免旧 store 状态缓存导致授权后仍读不到日历。
+- 如果权限是“仅添加事件”、已拒绝或受限制，会打开系统设置的日历隐私页，并在设置界面显示当前状态。
+- 授权成功后会把本地 JSON 模式下创建的日程导入系统日历，避免切换到 EventKit 后本地日程从界面消失。
+
 如果曾运行过未带 Calendar entitlement 的旧版包，macOS 可能缓存了拒绝结果。更新到新版后仍不弹权限框时，可定向重置本应用的日历授权记录：
 
 ```bash
