@@ -5,6 +5,15 @@
     <description>日历 自动更新源</description>
     <language>zh</language>
     <item>
+      <title>1.0.11</title>
+      <pubDate>Mon, 15 Jun 2026 11:25:04 +0000</pubDate>
+      <sparkle:version>27</sparkle:version>
+      <sparkle:shortVersionString>1.0.11</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/macuhy/menubar-calendar/releases/tag/v1.0.11</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/macuhy/menubar-calendar/releases/download/v1.0.11/Calendar.zip" length="1448344" type="application/octet-stream" sparkle:edSignature="AnQVysA2kpCltBgOsyBtLDSGvCizAFwqqhAWAl+B9b7VoY4wJu+GKJiRfl+M8VMPzIY32jcKDB/11BJcxgGUAg==" sparkle:os="macos" />
+    </item>
+    <item>
       <title>1.0.10</title>
       <pubDate>Mon, 15 Jun 2026 05:39:44 +0000</pubDate>
       <sparkle:version>25</sparkle:version>
