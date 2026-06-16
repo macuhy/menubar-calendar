@@ -367,6 +367,12 @@ final class CalendarStore: ObservableObject {
         selectedDate = today
     }
 
+    func goTo(_ date: Date) {
+        let day = calendar.startOfDay(for: date)
+        displayedMonth = day
+        selectedDate = day
+    }
+
     // MARK: Mutations（系统日历模式下直接写回 EventKit）
 
     func add(_ event: CalendarEvent) {

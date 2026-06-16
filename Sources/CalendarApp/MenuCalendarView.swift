@@ -14,6 +14,9 @@ struct MenuCalendarView: View {
     @State private var editingEvent: CalendarEvent? = nil
     @State private var creating: CreationTarget? = nil
     @State private var showingSettings = false
+    @State private var commandText = ""
+    @State private var commandMessage: String? = nil
+    @FocusState private var commandFocused: Bool
 
     var body: some View {
         Group {
@@ -38,12 +41,19 @@ struct MenuCalendarView: View {
         }
         .onAppear {
             publishSheetBehavior()
+            focusCommandField()
         }
         .onDisappear {
             publishSheetBehavior(keepOpen: false)
         }
         .onChange(of: creating != nil) { _, _ in publishSheetBehavior() }
         .onChange(of: editingEvent != nil) { _, _ in publishSheetBehavior() }
+        .onChange(of: showingSettings) { _, isShowing in
+            if !isShowing { focusCommandField() }
+        }
+        .onChange(of: commandText) { _, newValue in
+            if !newValue.isEmpty { commandMessage = nil }
+        }
     }
 
     private var calendarPanel: some View {
@@ -51,6 +61,10 @@ struct MenuCalendarView: View {
             header
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
+                .padding(.bottom, 6)
+
+            commandBar
+                .padding(.horizontal, 12)
                 .padding(.bottom, 6)
 
             weekdayRow
@@ -62,7 +76,11 @@ struct MenuCalendarView: View {
 
             Divider()
 
-            agendaList
+            if isCommandActive {
+                commandResults
+            } else {
+                agendaList
+            }
 
             Divider()
 
@@ -77,6 +95,12 @@ struct MenuCalendarView: View {
             object: nil,
             userInfo: ["keepOpen": shouldKeepOpen]
         )
+    }
+
+    private func focusCommandField() {
+        DispatchQueue.main.async {
+            commandFocused = true
+        }
     }
 
     // MARK: - Header
@@ -109,6 +133,60 @@ struct MenuCalendarView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Command bar
+
+    private var commandBar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Theme.secondaryText)
+
+                TextField("搜索、跳转或创建：明天 10点 产品会 1h", text: $commandText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($commandFocused)
+                    .onSubmit(runCommand)
+
+                if !commandText.isEmpty {
+                    Button {
+                        commandText = ""
+                        commandMessage = nil
+                        focusCommandField()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.secondaryText.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                    .help("清空")
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(0.055))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(commandFocused ? 0.18 : 0.08), lineWidth: 1)
+            )
+
+            if let commandMessage, commandText.isEmpty {
+                Text(commandMessage)
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.secondaryText)
+                    .lineLimit(1)
+                    .padding(.horizontal, 2)
+            }
+        }
+    }
+
+    private var isCommandActive: Bool {
+        !commandText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // MARK: - Grid
@@ -202,6 +280,170 @@ struct MenuCalendarView: View {
         } onDelete: {
             store.delete(event)
         }
+    }
+
+    // MARK: - Command results
+
+    private var commandResults: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if let command = parsedCommand {
+                    commandPreview(command)
+                        .padding(.bottom, 6)
+                }
+
+                let results = searchResults
+                if !results.isEmpty {
+                    sectionHeader("搜索结果")
+                    ForEach(results) { agendaRow($0, showDate: true) }
+                } else if case nil = parsedCommand {
+                    emptyHint("没有找到匹配事件")
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private var parsedCommand: QuickCommand? {
+        QuickCommandParser.parse(
+            commandText,
+            calendar: store.calendar,
+            selectedDate: store.selectedDate
+        )
+    }
+
+    private var searchResults: [CalendarEvent] {
+        let query = searchQuery
+        guard !query.isEmpty else { return [] }
+        return filteredEvents(for: query)
+    }
+
+    private var searchQuery: String {
+        let trimmed = commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedSearch = parsedCommand?.searchText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return parsedSearch.isEmpty ? trimmed : parsedSearch
+    }
+
+    private func commandPreview(_ command: QuickCommand) -> some View {
+        Button {
+            runCommand()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: commandIcon(command))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(commandTitle(command))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Text("按回车执行")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.secondaryText)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Theme.accent.opacity(0.08))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func commandIcon(_ command: QuickCommand) -> String {
+        switch command.action {
+        case .jump:
+            return "arrow.turn.down.right"
+        case .create:
+            return "plus.circle.fill"
+        }
+    }
+
+    private func commandTitle(_ command: QuickCommand) -> String {
+        switch command.action {
+        case .jump(let date):
+            return "跳转到 \(date.formatted("M月d日 EEE"))"
+        case .create(let event):
+            return "创建 \(event.title) · \(eventDateTimeLabel(event))"
+        }
+    }
+
+    private func eventDateTimeLabel(_ event: CalendarEvent) -> String {
+        if event.isAllDay {
+            return "\(event.date.formatted("M月d日 EEE")) 全天"
+        }
+        return "\(event.date.formatted("M月d日 EEE")) \(event.startTime.formatted("HH:mm"))-\(event.endTime.formatted("HH:mm"))"
+    }
+
+    private func runCommand() {
+        let trimmed = commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if let command = parsedCommand {
+            execute(command)
+            return
+        }
+
+        if let first = filteredEvents(for: trimmed).first {
+            store.goTo(first.date)
+            editingEvent = first
+            commandText = ""
+            commandMessage = "已打开：\(first.title)"
+            return
+        }
+
+        commandMessage = "没有找到匹配事件"
+    }
+
+    private func execute(_ command: QuickCommand) {
+        switch command.action {
+        case .jump(let date):
+            store.goTo(date)
+            commandText = ""
+            commandMessage = "已跳转到 \(date.formatted("M月d日 EEE"))"
+        case .create(let event):
+            store.add(event)
+            store.goTo(event.date)
+            commandText = ""
+            commandMessage = "已创建：\(event.title)"
+        }
+        focusCommandField()
+    }
+
+    private func filteredEvents(for query: String) -> [CalendarEvent] {
+        let tokens = query
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+        guard !tokens.isEmpty else { return [] }
+
+        let today = store.calendar.startOfDay(for: Date())
+        return store.events
+            .filter { event in
+                let haystack = [
+                    event.title,
+                    event.location,
+                    event.notes,
+                    event.date.formatted("yyyy-M-d EEE"),
+                    event.date.formatted("M月d日 EEE")
+                ]
+                    .joined(separator: " ")
+                    .lowercased()
+                return tokens.allSatisfy { haystack.localizedCaseInsensitiveContains($0) }
+            }
+            .sorted { lhs, rhs in
+                let lhsFuture = lhs.startTime >= today
+                let rhsFuture = rhs.startTime >= today
+                if lhsFuture != rhsFuture { return lhsFuture }
+                return lhsFuture ? lhs.startTime < rhs.startTime : lhs.startTime > rhs.startTime
+            }
+            .prefix(20)
+            .map { $0 }
     }
 
     // MARK: - Footer
