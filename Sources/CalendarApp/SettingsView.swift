@@ -152,7 +152,14 @@ struct SettingsView: View {
                 }
             }
         }
-        .frame(width: 340, height: 600)
+        .frame(
+            minWidth: PanelLayout.minimumWidth,
+            idealWidth: PanelLayout.preferredWidth,
+            maxWidth: .infinity,
+            minHeight: PanelLayout.minimumHeight,
+            idealHeight: PanelLayout.preferredHeight,
+            maxHeight: .infinity
+        )
         .background(PanelBackground().ignoresSafeArea())
         .preferredColorScheme(store.appearanceMode.colorScheme)
     }

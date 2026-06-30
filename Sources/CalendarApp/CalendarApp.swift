@@ -16,19 +16,10 @@ struct CalendarApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
-    private var autoHideTimer: Timer?
-    private var hoverOpenTimer: Timer?
     private var titleTimer: Timer?
     private var storeSubscription: AnyCancellable?
     private var appearanceSubscription: AnyCancellable?
-    private var sheetBehaviorObserver: NSObjectProtocol?
     private var hotKey: GlobalHotKey?
-    /// 由快捷键打开且鼠标尚未移入面板时，悬停检测不收起面板
-    private var openedViaHotKey = false
-    private var hoveredSinceHotKeyOpen = false
-    /// 刚关闭后若光标仍停在图标上，先不重开；待光标离开图标再恢复悬停打开
-    private var suppressHoverReopen = false
-    private var keepOpenWhileSheetIsPresented = false
     private var outsideClickMonitor: Any?
     private var escKeyMonitor: Any?
     let store = CalendarStore()
@@ -43,21 +34,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.imagePosition = .imageLeading
             button.target = self
             button.action = #selector(toggleFromClick)
-            // 悬停即弹出：给菜单栏按钮挂 tracking area
-            let tracking = NSTrackingArea(
-                rect: .zero,
-                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                owner: self, userInfo: nil
-            )
-            button.addTrackingArea(tracking)
             updateTitle()
         }
 
-        // 关闭时机完全由我们控制（悬停离开后自动收起），避免 transient 行为
-        // 在弹出编辑 sheet 时把面板一起关掉
+        // 点击打开，由我们监听应用外点击关闭，避免 transient 行为影响编辑 sheet。
         popover.behavior = .applicationDefined
         popover.animates = false
-        popover.contentSize = NSSize(width: 340, height: 600)
+        popover.contentSize = NSSize(
+            width: PanelLayout.preferredWidth,
+            height: PanelLayout.preferredHeight
+        )
         popover.contentViewController = NSHostingController(
             rootView: MenuCalendarView()
                 .environmentObject(store)
@@ -68,10 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         titleTimer = scheduleRepeatingTimer(interval: 1) { [weak self] _ in
             Task { @MainActor in self?.updateTitle() }
         }
-        // 菜单栏按钮的 tracking event 偶尔会被系统状态栏吞掉，轮询鼠标位置更稳定。
-        hoverOpenTimer = scheduleRepeatingTimer(interval: 0.12) { [weak self] _ in
-            Task { @MainActor in self?.openOnMenuBarHoverIfNeeded() }
-        }
 
         // 时区设置变化时，菜单栏日期立即跟着刷新
         storeSubscription = store.$timeZoneID.sink { [weak self] _ in
@@ -79,13 +61,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         appearanceSubscription = store.$appearanceMode.sink { [weak self] _ in
             Task { @MainActor in self?.applyPopoverAppearance() }
-        }
-        sheetBehaviorObserver = NotificationCenter.default.addObserver(
-            forName: .calendarPopoverSheetBehaviorChanged, object: nil, queue: .main
-        ) { [weak self] note in
-            Task { @MainActor in
-                self?.keepOpenWhileSheetIsPresented = note.userInfo?["keepOpen"] as? Bool ?? false
-            }
         }
 
         // 全局快捷键 ⌃⌥C：显示 / 隐藏面板
@@ -119,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Hover open / auto close
+    // MARK: - Popover
 
     private func scheduleRepeatingTimer(
         interval: TimeInterval,
@@ -130,18 +105,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return timer
     }
 
-    @objc(mouseEntered:)
-    func mouseEntered(with event: NSEvent) {
-        requestHoverOpen()
-    }
-
-    @objc(mouseExited:)
-    func mouseExited(with event: NSEvent) {
-        // 离开图标即重新武装悬停打开（轮询也会兜底复位）
-        suppressHoverReopen = false
-        // 之后由 autoHideTimer 判断鼠标是否已移入面板，否则收起
-    }
-
     @objc private func toggleFromClick() {
         popover.isShown ? closePopover() : showPopover()
     }
@@ -150,17 +113,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             closePopover()
         } else {
-            showPopover(viaHotKey: true)
+            showPopover()
             // 激活应用，让面板能直接接收键盘事件（如 Esc）
             NSApp.activate(ignoringOtherApps: true)
         }
     }
 
-    private func showPopover(viaHotKey: Bool = false) {
+    private func showPopover() {
         guard !popover.isShown, let button = statusItem.button else { return }
         store.refreshCalendarAuthorization()
-        openedViaHotKey = viaHotKey
-        hoveredSinceHotKeyOpen = false
+        updatePopoverSize()
         applyPopoverAppearance()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         applyPopoverAppearance()
@@ -170,15 +132,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.positionPopoverNearStatusItem()
             if let button { self?.clearStatusButtonHighlight(button) }
         }
-        startAutoHideMonitor()
-        if viaHotKey {
-            // 点击应用外任意位置时收起（全局监听不会收到本应用内的点击）
-            outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
-                matching: [.leftMouseDown, .rightMouseDown]
-            ) { [weak self] _ in
-                Task { @MainActor in self?.closePopover() }
-            }
+        startOutsideClickMonitor()
+    }
+
+    private func updatePopoverSize() {
+        guard let screenFrame = statusButtonScreenRect().flatMap({ screen(containing: $0)?.visibleFrame })
+            ?? NSScreen.main?.visibleFrame else {
+            popover.contentSize = NSSize(
+                width: PanelLayout.preferredWidth,
+                height: PanelLayout.preferredHeight
+            )
+            return
         }
+        let margin = PanelLayout.screenMargin
+        let availableWidth = max(0, screenFrame.width - margin * 2)
+        let availableHeight = max(0, screenFrame.height - margin * 2)
+
+        popover.contentSize = NSSize(
+            width: fittedLength(
+                preferred: PanelLayout.preferredWidth,
+                minimum: PanelLayout.minimumWidth,
+                available: availableWidth
+            ),
+            height: fittedLength(
+                preferred: PanelLayout.preferredHeight,
+                minimum: PanelLayout.minimumHeight,
+                available: availableHeight
+            )
+        )
+    }
+
+    private func fittedLength(preferred: CGFloat, minimum: CGFloat, available: CGFloat) -> CGFloat {
+        guard available > 0 else { return preferred }
+        let capped = min(preferred, available)
+        return capped >= minimum ? capped : available
     }
 
     private func positionPopoverNearStatusItem() {
@@ -188,14 +175,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ?? window.screen?.visibleFrame
             ?? NSScreen.main?.visibleFrame
             ?? window.frame
-        let margin: CGFloat = 8
+        let margin = PanelLayout.screenMargin
         let gap: CGFloat = 6
 
         var frame = window.frame
+        frame.size.width = min(frame.width, max(0, screenFrame.width - margin * 2))
+        frame.size.height = min(frame.height, max(0, screenFrame.height - margin * 2))
+
         frame.origin.x = buttonRect.midX - frame.width / 2
-        frame.origin.x = min(
-            max(frame.origin.x, screenFrame.minX + margin),
-            screenFrame.maxX - frame.width - margin
+        frame.origin.x = clampedOrigin(
+            frame.origin.x,
+            lower: screenFrame.minX + margin,
+            upper: screenFrame.maxX - frame.width - margin
         )
 
         let belowMenuBarY = buttonRect.minY - frame.height - gap
@@ -203,28 +194,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         frame.origin.y = belowMenuBarY >= screenFrame.minY + margin
             ? belowMenuBarY
             : aboveButtonY
-        frame.origin.y = min(
-            max(frame.origin.y, screenFrame.minY + margin),
-            screenFrame.maxY - frame.height - margin
+        frame.origin.y = clampedOrigin(
+            frame.origin.y,
+            lower: screenFrame.minY + margin,
+            upper: screenFrame.maxY - frame.height - margin
         )
 
         window.setFrame(frame, display: true)
     }
 
-    private func openOnMenuBarHoverIfNeeded() {
-        requestHoverOpen()
-    }
-
-    /// 悬停打开的唯一入口：tracking-area 与轮询都走这里，统一处理「关闭后不立即重开」。
-    private func requestHoverOpen() {
-        guard !popover.isShown else { return }
-        if suppressHoverReopen {
-            // 光标仍停在图标上则保持抑制；离开后复位，下次再移入才会打开
-            if !mouseIsOverStatusButton() { suppressHoverReopen = false }
-            return
-        }
-        guard mouseIsOverStatusButton() else { return }
-        showPopover()
+    private func clampedOrigin(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        guard upper >= lower else { return lower }
+        return min(max(value, lower), upper)
     }
 
     private func applyPopoverAppearance() {
@@ -252,61 +233,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func closePopover() {
-        autoHideTimer?.invalidate()
-        autoHideTimer = nil
         if let outsideClickMonitor {
             NSEvent.removeMonitor(outsideClickMonitor)
             self.outsideClickMonitor = nil
         }
-        openedViaHotKey = false
-        suppressHoverReopen = true // 防止光标停在图标上时被轮询立刻重开
-        keepOpenWhileSheetIsPresented = false
         popover.performClose(nil)
     }
 
-    /// 每 0.2s 检查一次：鼠标既不在菜单栏按钮上、也不在面板内（含编辑 sheet）时收起。
-    private func startAutoHideMonitor() {
-        autoHideTimer?.invalidate()
-        var graceTicks = 3 // 刚弹出后约 0.6s 宽限，避免从按钮移向面板途中被收起
-        autoHideTimer = scheduleRepeatingTimer(interval: 0.2) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.popover.isShown else {
-                    self?.autoHideTimer?.invalidate()
-                    return
-                }
-                if graceTicks > 0 { graceTicks -= 1; return }
-                let mouseInside = self.mouseIsOverButtonOrPanel()
-                // 快捷键打开的面板：鼠标移入过面板之后才恢复「移出即收起」
-                if self.openedViaHotKey && !self.hoveredSinceHotKeyOpen {
-                    if mouseInside { self.hoveredSinceHotKeyOpen = true }
-                    return
-                }
-                if !mouseInside {
-                    self.closePopover()
-                }
-            }
+    private func startOutsideClickMonitor() {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
         }
-    }
-
-    private func mouseIsOverButtonOrPanel() -> Bool {
-        let mouse = NSEvent.mouseLocation
-        if mouseIsOverStatusButton() {
-            return true
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            Task { @MainActor in self?.closePopover() }
         }
-        if let panel = popover.contentViewController?.view.window {
-            if keepOpenWhileSheetIsPresented, panel.attachedSheet != nil { return true }
-            if let sheet = panel.attachedSheet,
-               sheet.frame.insetBy(dx: -20, dy: -20).contains(mouse) {
-                return true
-            }
-            if panel.frame.insetBy(dx: -20, dy: -20).contains(mouse) { return true }
-        }
-        return false
-    }
-
-    private func mouseIsOverStatusButton() -> Bool {
-        guard let buttonRectOnScreen = statusButtonScreenRect() else { return false }
-        return buttonRectOnScreen.insetBy(dx: -6, dy: -6).contains(NSEvent.mouseLocation)
     }
 
     private func statusButtonScreenRect() -> NSRect? {
@@ -319,8 +261,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let point = NSPoint(x: rect.midX, y: rect.midY)
         return NSScreen.screens.first { $0.frame.contains(point) }
     }
-}
-
-extension Notification.Name {
-    static let calendarPopoverSheetBehaviorChanged = Notification.Name("calendarPopoverSheetBehaviorChanged")
 }

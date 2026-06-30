@@ -28,7 +28,14 @@ struct MenuCalendarView: View {
                 calendarPanel
             }
         }
-        .frame(width: 340, height: 600)
+        .frame(
+            minWidth: PanelLayout.minimumWidth,
+            idealWidth: PanelLayout.preferredWidth,
+            maxWidth: .infinity,
+            minHeight: PanelLayout.minimumHeight,
+            idealHeight: PanelLayout.preferredHeight,
+            maxHeight: .infinity
+        )
         .background(PanelBackground().ignoresSafeArea())
         .preferredColorScheme(store.appearanceMode.colorScheme)
         .sheet(item: $creating) { target in
@@ -40,14 +47,8 @@ struct MenuCalendarView: View {
                 .preferredColorScheme(store.appearanceMode.colorScheme)
         }
         .onAppear {
-            publishSheetBehavior()
             focusCommandField()
         }
-        .onDisappear {
-            publishSheetBehavior(keepOpen: false)
-        }
-        .onChange(of: creating != nil) { _, _ in publishSheetBehavior() }
-        .onChange(of: editingEvent != nil) { _, _ in publishSheetBehavior() }
         .onChange(of: showingSettings) { _, isShowing in
             if !isShowing { focusCommandField() }
         }
@@ -86,15 +87,6 @@ struct MenuCalendarView: View {
 
             footer
         }
-    }
-
-    private func publishSheetBehavior(keepOpen: Bool? = nil) {
-        let shouldKeepOpen = keepOpen ?? (creating != nil || editingEvent != nil)
-        NotificationCenter.default.post(
-            name: .calendarPopoverSheetBehaviorChanged,
-            object: nil,
-            userInfo: ["keepOpen": shouldKeepOpen]
-        )
     }
 
     private func focusCommandField() {
