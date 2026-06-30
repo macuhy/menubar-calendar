@@ -39,11 +39,11 @@ struct MenuCalendarView: View {
         .background(PanelBackground().ignoresSafeArea())
         .preferredColorScheme(store.appearanceMode.colorScheme)
         .sheet(item: $creating) { target in
-            EventEditorView(mode: .create(initialDate: target.date))
+            EventEditorView(mode: .create(initialDate: target.date), calendar: store.calendar)
                 .preferredColorScheme(store.appearanceMode.colorScheme)
         }
         .sheet(item: $editingEvent) { event in
-            EventEditorView(mode: .edit(event))
+            EventEditorView(mode: .edit(event), calendar: store.calendar)
                 .preferredColorScheme(store.appearanceMode.colorScheme)
         }
         .onAppear {

@@ -13,6 +13,7 @@ struct EventEditorView: View {
     @EnvironmentObject var store: CalendarStore
     @Environment(\.dismiss) private var dismiss
     let mode: EditorMode
+    private let editorCalendar: Calendar
 
     @State private var title: String
     @State private var location: String
@@ -23,19 +24,17 @@ struct EventEditorView: View {
     @State private var notes: String
     @State private var timeAdjustmentMessage: String?
 
-    init(mode: EditorMode) {
+    init(mode: EditorMode, calendar: Calendar = .current) {
         self.mode = mode
+        self.editorCalendar = calendar
         switch mode {
         case .create(let initialDate):
-            let cal = Calendar.current
-            let day = cal.startOfDay(for: initialDate)
-            let start = cal.date(bySettingHour: 9, minute: 0, second: 0, of: day) ?? day
-            let end = cal.date(bySettingHour: 10, minute: 0, second: 0, of: day) ?? day
+            let range = EventEditorDefaults.defaultRange(for: initialDate, calendar: calendar)
             _title = State(initialValue: "")
             _location = State(initialValue: "")
             _isAllDay = State(initialValue: false)
-            _startTime = State(initialValue: start)
-            _endTime = State(initialValue: end)
+            _startTime = State(initialValue: range.start)
+            _endTime = State(initialValue: range.end)
             _colorIndex = State(initialValue: 0)
             _notes = State(initialValue: "")
         case .edit(let event):
@@ -107,6 +106,8 @@ struct EventEditorView: View {
                     .frame(width: 36, alignment: .leading)
                 DatePicker("", selection: $startTime, displayedComponents: pickerComponents)
                     .labelsHidden()
+                    .environment(\.calendar, editorCalendar)
+                    .environment(\.timeZone, editorCalendar.timeZone)
             }
 
             HStack {
@@ -115,6 +116,8 @@ struct EventEditorView: View {
                     .frame(width: 36, alignment: .leading)
                 DatePicker("", selection: $endTime, displayedComponents: pickerComponents)
                     .labelsHidden()
+                    .environment(\.calendar, editorCalendar)
+                    .environment(\.timeZone, editorCalendar.timeZone)
             }
 
             if let validationMessage {
@@ -292,5 +295,14 @@ struct EventEditorView: View {
 
     private func nextDay(after date: Date) -> Date {
         store.calendar.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(24 * 60 * 60)
+    }
+}
+
+enum EventEditorDefaults {
+    static func defaultRange(for initialDate: Date, calendar: Calendar) -> (start: Date, end: Date) {
+        let day = calendar.startOfDay(for: initialDate)
+        let start = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) ?? day
+        let end = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: day) ?? start.addingTimeInterval(3_600)
+        return (start, end)
     }
 }
